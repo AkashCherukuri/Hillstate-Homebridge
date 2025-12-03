@@ -30,6 +30,8 @@
     "watch": "npm run build && npm link && nodemon"
   },
   "dependencies": {
+    "crypto-ts": "^1.0.2",
+    "got": "^14.6.5",
     "homebridge-lib": "^7.1.12"
   },
   "devDependencies": {

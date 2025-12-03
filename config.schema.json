@@ -5,13 +5,33 @@
   "strictValidation": false,
   "schema": {
     "type": "object",
-    "required": ["name"],
+    "required": [
+      "username",
+      "passowrd",
+      "dong",
+      "ho"
+    ],
     "additionalProperties": false,
     "properties": {
-      "name": {
-        "title": "Name",
+      "username": {
+        "title": "Hillstate IOT username",
         "type": "string",
-        "default": "Example Dynamic Platform"
+        "default": ""
+      },
+      "password": {
+        "title": "Hillstate IOT password",
+        "type": "string",
+        "default": ""
+      },
+      "dong": {
+        "title": "Hillstate Dong number",
+        "type": "number",
+        "default": ""
+      },
+      "ho": {
+        "title": "Hillstate Ho number",
+        "type": "number",
+        "default": ""
       }
     }
   }
