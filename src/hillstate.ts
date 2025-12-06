@@ -1,7 +1,13 @@
 import { Logging } from 'homebridge';
 import { AES } from 'crypto-ts';
 import got from 'got';
+
 import { CONSTS } from './consts.js';
+import {
+  OnOrOff,
+  deviceStatusResp,
+  deviceDiscoverResp,
+} from './types.js';
 
 export class HillstateAPI {
   private basicHeaders = {
@@ -26,6 +32,7 @@ export class HillstateAPI {
   private sidCookie: string = '';
 
   // Initialize this class with the encrypted username and password   
+  // Automatically refresh the session cookie every 5 minutes
   constructor(
     public readonly log: Logging,
     public readonly username: string,
@@ -39,10 +46,146 @@ export class HillstateAPI {
     this.ho                = hoIn;
 
     this.log.info('Hillstate API initialized with encrypted credentials');
+
+    this.authenticate();
+    setInterval(this.authenticate, 5*60*1000);
+  }
+
+  public async getLight(light: string): Promise<boolean> {
+    return await this.getLightInt(true, light);
+  }
+
+  public async setLight(light: string, cmd: OnOrOff): Promise<boolean> {
+    return await this.setLightInt(true, light, cmd);
+  }
+
+  public async discoverDevices(): Promise<deviceDiscoverResp> {
+    return await this.discoverDevicesInt(true);
+  }
+
+  // discoverDevicesInt returns a JSON of all of the devices in Hillstate after querying the API
+  private async discoverDevicesInt(first: boolean): Promise<deviceDiscoverResp> {
+    this.log.info('attempting to discover devices');
+
+    try {
+      const lightsDiscoverResp = await got.get(CONSTS.HILLSTATE_DISCOVER_DEVICES_URL,{
+        headers: {
+          'Cookie': this.sidCookie,
+          ...this.basicHeaders,
+        },
+      });
+
+      const lightsDiscoverData: deviceDiscoverResp = JSON.parse(lightsDiscoverResp.body as string);
+      return lightsDiscoverData;
+    } catch (error) {
+      if (first) {
+        this.log.info('attempting auth before re-attempting discovering devices');
+        await this.authenticate();
+        return await this.discoverDevicesInt(false);
+      }
+
+      this.log.error('discovering devices failed after auth');
+      if (error instanceof Error) {
+        this.log.error(error.message);
+        this.log.error(error.stack??'stack trace undefined');
+      } else {
+        this.log.error('unknown error occured, dig deeper! Rock and Stone!');
+      }
+      return CONSTS.EMPTY_DEVICES_DISCOVER_RESP;
+    }
+  }
+
+  //! TODO: Take light as an argument here!
+  // getLight gets the status of the light
+  // returns True if the light is On, False if Off or there was an error
+  private async getLightInt(first: boolean, light: string): Promise<boolean> {
+    this.log.info('attempting to get light info');
+
+    try {
+
+      const lightGet = await got.get(CONSTS.HILLSTATE_LIGHT_URL + light, {
+        headers: {
+          'Cookie': this.sidCookie,
+          ...this.basicHeaders,
+        },
+      });
+
+      if (lightGet.statusCode !== 200) {
+        this.log.error('getting light failed');
+        throw new Error('Error getting light status');
+      }
+
+      const data: deviceStatusResp = JSON.parse(lightGet.body as string);
+      return data.data.statusList[0].value === 'on';
+      
+    } catch (error) {
+      if (first) {
+        this.log.info('attempting auth before re-attempting getting light');
+        await this.authenticate();
+        return await this.getLightInt(false, light);
+      }
+
+      this.log.error('getting light failed after auth');
+      if (error instanceof Error) {
+        this.log.error(error.message);
+        this.log.error(error.stack??'stack trace undefined');
+      } else {
+        this.log.error('unknown error occured, dig deeper! Rock and Stone!');
+      }
+      return false;
+    }
+  }
+
+  //! TODO: Take a light as an argument and use it to get the status of a lightbulb
+  // setLight gets the status of the hardcoded lightbulb
+  // If the call fails, attempt to authenticate and try again!
+  private async setLightInt(first: boolean, light: string, cmd: OnOrOff): Promise<boolean> {
+    this.log.info('attempting to set the light to: ', cmd);
+
+    try {
+      const lightResp = await got.put(CONSTS.HILLSTATE_LIGHT_URL + light, {
+        headers: {
+          'Cookie': this.sidCookie,
+          ...this.basicHeaders,
+        },
+        json: {
+          'commandList': [
+            {
+              'command': 'power',
+              'value': cmd,
+            },
+          ],
+        },
+      }); 
+      
+      if (lightResp.statusCode !== 200) {
+        this.log.error('setting light failed');
+        throw new Error('Error setting light status');
+      }
+
+      this.log.info('light set to: ', cmd);
+      return true;
+
+    } catch (error) {
+      if (first) {
+        this.log.info('attempting auth before re-attempting setting light');
+        await this.authenticate();
+        return await this.setLightInt(false, light, cmd);
+      }
+
+      this.log.error('setting light failed after auth');
+      if (error instanceof Error) {
+        this.log.error(error.message);
+        this.log.error(error.stack??'stack trace undefined');
+      } else {
+        this.log.error('unknown error occured, dig deeper! Rock and Stone!');
+      }
+      return false;
+    }
   }
 
   // authenticate logs in to Hillstate API with encrypted credentials and updates the current sessionID variable
-  public async authenticate(): Promise<boolean> {
+  private async authenticate(): Promise<boolean> {
     this.log.info('authentication method initialized...');
 
     try {
@@ -65,10 +208,10 @@ export class HillstateAPI {
       const authRespCookie = authResp.headers['set-cookie'] ?? '';
       this.sidCookie = authRespCookie.toString().split(';')[0];
 
-      console.info('authentication successful, sid cookie: ', this.sidCookie);
+      this.log.info('authentication successful, sid cookie: ', this.sidCookie);
 
       // Get the CTOC Token
-      console.info('setting CTOC token...');
+      this.log.info('setting CTOC token...');
 
       const ctocResp = await got.post(CONSTS.HILLSTATE_CTOC_URL, {
         headers: {
