@@ -6,4 +6,4 @@ export const PLATFORM_NAME = 'Hillstate IOT';
 /**
  * This must match the name of your plugin as defined the package.json `name` property
  */
-export const PLUGIN_NAME = 'homebridge-hillstate-iots';
+export const PLUGIN_NAME = 'homebridge-hillstate-iot';

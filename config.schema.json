@@ -33,6 +33,11 @@
       "ho": {
         "title": "Hillstate Ho number",
         "type": "number"
+      },
+      "bathroomVentName": {
+        "title": "Bathroom Vent name on Hillstate",
+        "type": "string",
+        "default": "침실2-2"
       }
     }
   }

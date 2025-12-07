@@ -19,6 +19,7 @@ export abstract class CONSTS {
 
   static readonly HILLSTATE_DISCOVER_DEVICES_URL: string = 'https://www2.hthomeservice.com/proxy/ctoc/devices';
   static readonly HILLSTATE_LIGHT_URL: string = 'https://www2.hthomeservice.com/proxy/ctoc/lights/';
+  static readonly HILLSTATE_AIRCON_URL: string = 'https://www2.hthomeservice.com/proxy/ctoc/aircons/';
 
   static readonly EMPTY_DEVICES_DISCOVER_RESP: deviceDiscoverResp = {
     'resultStatus': '',

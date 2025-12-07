@@ -10,6 +10,7 @@ import { OnOrOff } from './types.js';
  */
 export class HillstateAirconPlatformAccessory {
   private service: Service;
+  private thisTemp: CharacteristicValue;
 
   /**
    * These are just used to create a working example
@@ -24,6 +25,8 @@ export class HillstateAirconPlatformAccessory {
     private readonly platform: HillstateIOTHomebridgePlatform,
     private readonly accessory: PlatformAccessory,
   ) {
+    this.thisTemp = 35;
+
     // set accessory information
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
       .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
@@ -53,112 +56,53 @@ export class HillstateAirconPlatformAccessory {
     // see https://developers.homebridge.io/#/service/Lightbulb
 
     // // register handlers for the On/Off Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.On)
+    this.service.getCharacteristic(this.platform.Characteristic.Active)
       .onSet(this.setOn.bind(this)) // SET - bind to the `setOn` method below
       .onGet(this.getOn.bind(this)); // GET - bind to the `getOn` method below
-
-    // // register handlers for the Brightness Characteristic
-    // this.service.getCharacteristic(this.platform.Characteristic.Brightness)
-    //   .onSet(this.setBrightness.bind(this)); // SET - bind to the `setBrightness` method below
-
-    /**
-     * Creating multiple services of the same type.
-     *
-     * To avoid "Cannot add a Service with the same UUID another Service without also defining a unique 'subtype' property." error,
-     * when creating multiple services of the same type, you need to use the following syntax to specify a name and subtype id:
-     * this.accessory.getService('NAME') || this.accessory.addService(this.platform.Service.Lightbulb, 'NAME', 'USER_DEFINED_SUBTYPE_ID');
-     *
-     * The USER_DEFINED_SUBTYPE must be unique to the platform accessory (if you platform exposes multiple accessories, each accessory
-     * can use the same subtype id.)
-     */
-
-    // Example: add two "motion sensor" services to the accessory
-    // const motionSensorOneService = this.accessory.getService('Motion Sensor One Name')
-    //   || this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor One Name', 'YourUniqueIdentifier-1');
-
-    // const motionSensorTwoService = this.accessory.getService('Motion Sensor Two Name')
-    //   || this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor Two Name', 'YourUniqueIdentifier-2');
-
-    /**
-     * Updating characteristics values asynchronously.
-     *
-     * Example showing how to update the state of a Characteristic asynchronously instead
-     * of using the `on('get')` handlers.
-     * Here we change update the motion sensor trigger states on and off every 10 seconds
-     * the `updateCharacteristic` method.
-     *
-     */
-    // let motionDetected = false;
-    // setInterval(() => {
-    //   // EXAMPLE - inverse the trigger
-    //   motionDetected = !motionDetected;
-
-    //   // push the new value to HomeKit
-    //   motionSensorOneService.updateCharacteristic(this.platform.Characteristic.MotionDetected, motionDetected);
-    //   motionSensorTwoService.updateCharacteristic(this.platform.Characteristic.MotionDetected, !motionDetected);
-
-    //   this.platform.log.debug('Triggering motionSensorOneService:', motionDetected);
-    //   this.platform.log.debug('Triggering motionSensorTwoService:', !motionDetected);
-    // }, 10000);
-
-
+    
+    this.service.getCharacteristic(this.platform.Characteristic.CurrentHeaterCoolerState)
+      .onGet(this.getCurrentHeaterCoolerState.bind(this));
+    
+    this.service.getCharacteristic(this.platform.Characteristic.TargetHeaterCoolerState)
+      .onGet(this.getTargetHeaterCoolerState.bind(this))
+      .onSet(this.setTargetHeaterCoolerState.bind(this));
+    
+    this.service.getCharacteristic(this.platform.Characteristic.CurrentTemperature)
+      .onGet(this.getCurrentTemperature.bind(this))
+      .onSet(this.setCurrentTemperature.bind(this));
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, turning on a Light bulb.
-   */
   async setOn(value: CharacteristicValue) {
-    const cmd:OnOrOff = value?'on':'off';
-    this.platform.hillstateAPI.setLight(this.accessory.displayName, cmd);
-    // implement your own code to turn your device on/off
-    // this.exampleStates.On = value as boolean;
-
+    const cmd:OnOrOff = value===this.platform.api.hap.Characteristic.Active.ACTIVE ? 'on' : 'off';
+    this.platform.hillstateAPI.setAirconPower(this.accessory.displayName, cmd);
     this.platform.log.debug('Set Characteristic On ->', value);
   }
 
-  /**
-   * Handle the "GET" requests from HomeKit
-   * These are sent when HomeKit wants to know the current state of the accessory, for example, checking if a Light bulb is on.
-   *
-   * GET requests should return as fast as possible. A long delay here will result in
-   * HomeKit being unresponsive and a bad user experience in general.
-   *
-   * If your device takes time to respond you should update the status of your device
-   * asynchronously instead using the `updateCharacteristic` method instead.
-   * In this case, you may decide not to implement `onGet` handlers, which may speed up
-   * the responsiveness of your device in the Home app.
-
-   * @example
-   * this.service.updateCharacteristic(this.platform.Characteristic.On, true)
-   */
   async getOn(): Promise<CharacteristicValue> {
-    // implement your own code to check if the device is on
-    
     try {
-      const isOn = await this.platform.hillstateAPI.getLight(this.accessory.displayName) === true;
+      const isOn = await this.platform.hillstateAPI.getAirconPower(this.accessory.displayName) === true;
       this.platform.log.debug('Get Characteristic On ->', isOn);
-      return isOn;
+      return isOn ? this.platform.api.hap.Characteristic.Active.ACTIVE : this.platform.api.hap.Characteristic.Active.INACTIVE;
     } catch (error) {
       throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
-    
-    // const isOn = this.exampleStates.On;
-
-
-    // if you need to return an error to show the device as "Not Responding" in the Home app:
-    // throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-
   }
 
-  /**
-   * Handle "SET" requests from HomeKit
-   * These are sent when the user changes the state of an accessory, for example, changing the Brightness
-   */
-  // async setBrightness(value: CharacteristicValue) {
-  //   // implement your own code to set the brightness
-  //   this.exampleStates.Brightness = value as number;
+  async getCurrentHeaterCoolerState(): Promise<CharacteristicValue> {
+    return this.platform.api.hap.Characteristic.CurrentHeaterCoolerState.COOLING;
+  }
+  async getTargetHeaterCoolerState(): Promise<CharacteristicValue> {
+    return this.platform.api.hap.Characteristic.TargetHeaterCoolerState.COOL;
+  }  
+  async setTargetHeaterCoolerState(value: CharacteristicValue) {
+    this.platform.log.warn('Aircon can onlybe in COOL state, cannot set to ', value);
+  }
 
-  //   this.platform.log.debug('Set Characteristic Brightness -> ', value);
-  // }
+  async getCurrentTemperature(): Promise<CharacteristicValue> {
+    return this.thisTemp;
+  }
+
+  async setCurrentTemperature(value: CharacteristicValue) {
+    this.thisTemp = value;
+  }
 }

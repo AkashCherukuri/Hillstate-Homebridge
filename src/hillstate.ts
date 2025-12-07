@@ -63,6 +63,14 @@ export class HillstateAPI {
     return await this.discoverDevicesInt(true);
   }
 
+  public async getAirconPower(aircon: string): Promise<boolean> {
+    return await this.getAirconPowerInt(true, aircon);
+  }
+
+  public async setAirconPower(aircon: string, cmd: OnOrOff): Promise<boolean> {
+    return await this.setAirconPowerInt(true, aircon, cmd);
+  }
+
   // discoverDevicesInt returns a JSON of all of the devices in Hillstate after querying the API
   private async discoverDevicesInt(first: boolean): Promise<deviceDiscoverResp> {
     this.log.info('attempting to discover devices');
@@ -93,6 +101,89 @@ export class HillstateAPI {
       }
       return CONSTS.EMPTY_DEVICES_DISCOVER_RESP;
     }
+  }
+
+  private async setAirconPowerInt(first: boolean, aircon: string, cmd: OnOrOff): Promise<boolean> {
+    this.log.info('attempting to set the aircon to: ', cmd);
+
+    try {
+      const airconResp = await got.put(CONSTS.HILLSTATE_AIRCON_URL + aircon, {
+        headers: {
+          'Cookie': this.sidCookie,
+          ...this.basicHeaders,
+        },
+        json: {
+          'commandList': [
+            {
+              'command': 'power',
+              'value': cmd,
+            },
+          ],
+        },
+      }); 
+      
+      if (airconResp.statusCode !== 200) {
+        this.log.error('setting aircon failed');
+        throw new Error('Error setting aircon status');
+      }
+
+      this.log.info('aircon set to: ', cmd);
+      return true;
+
+    } catch (error) {
+      if (first) {
+        this.log.info('attempting auth before re-attempting setting aircon');
+        await this.authenticate();
+        return await this.setAirconPowerInt(false, aircon, cmd);
+      }
+
+      this.log.error('setting aircon failed after auth');
+      if (error instanceof Error) {
+        this.log.error(error.message);
+        this.log.error(error.stack??'stack trace undefined');
+      } else {
+        this.log.error('unknown error occured, dig deeper! Rock and Stone!');
+      }
+      return false;
+    }
+  }
+
+  private async getAirconPowerInt(first: boolean, aircon: string): Promise<boolean> {
+    this.log.info('attempting to get Aircon info: ', aircon);
+    try {
+      
+      const airconGet = await got.get(CONSTS.HILLSTATE_AIRCON_URL + aircon, {
+        headers: {
+          'Cookie': this.sidCookie,
+          ...this.basicHeaders,
+        },
+      });
+
+      if (airconGet.statusCode !== 200) {
+        this.log.error('getting aircon failed');
+        throw new Error('Error getting aircon status');
+      }
+
+      const data: deviceStatusResp = JSON.parse(airconGet.body as string);
+      return data.data.statusList[0].value === 'on';
+
+    } catch (error) {
+      if (first) {
+        this.log.info('attempting auth before re-attempting getting aircon');
+        await this.authenticate();
+        return await this.getAirconPowerInt(false, aircon);
+      }
+
+      this.log.error('getting aircon failed after auth');
+      if (error instanceof Error) {
+        this.log.error(error.message);
+        this.log.error(error.stack??'stack trace undefined');
+      } else {
+        this.log.error('unknown error occured, dig deeper! Rock and Stone!');
+      }
+      return false;
+    }
+
   }
 
   //! TODO: Take light as an argument here!

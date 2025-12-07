@@ -8,6 +8,8 @@ import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 import { HillstateAPI } from './hillstate.js';
 import { deviceDiscoverResp } from './types.js';
 import { CONSTS } from './consts.js';
+import { HillstateFanPlatformAccessory } from './fanAccessory.js';
+import { HillstateAirconPlatformAccessory } from './airconAccessory.js';
 
 /**
  * HomebridgePlatform
@@ -94,11 +96,20 @@ export class HillstateIOTHomebridgePlatform implements DynamicPlatformPlugin {
         const uuid = this.api.hap.uuid.generate(device.id);
         const existingDevice = this.accessories.get(uuid);
 
+        // Ignore the error flagged by intellisense here
         let PlatformAccessory: any;
 
         switch (device.deviceType) {
         case CONSTS.LIGHT_DEVICE_TYPE:
-          PlatformAccessory = HillstateLightPlatformAccessory;
+          this.log.info(device.deviceLocation, ' ', this.config.bathroomVentName);
+          if (device.deviceLocation === this.config.bathroomVentName) {
+            PlatformAccessory = HillstateFanPlatformAccessory;
+          } else {
+            PlatformAccessory = HillstateLightPlatformAccessory;
+          }
+          break;
+        case CONSTS.AIRCON_DEVICE_TYPE:
+          PlatformAccessory = HillstateAirconPlatformAccessory;
           break;
         default:
           continue;
@@ -109,7 +120,7 @@ export class HillstateIOTHomebridgePlatform implements DynamicPlatformPlugin {
           new PlatformAccessory(this, existingDevice);
         } else {
           // Save the device ID as the display name!
-          this.log.info('Adding new discovered deviec:', device.id);
+          this.log.info('Adding new discovered device:', device.id);
           const accessory = new this.api.platformAccessory(device.id, uuid);
           accessory.context.device = device;
           new PlatformAccessory(this, accessory);
