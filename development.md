@@ -10,7 +10,7 @@ These are notes taken while I work on this project. The official documentation i
 
 - Copy over required files
 
-    `rsync -av --exclude 'node_modules' --exclude '.git' ./dist ./package.json ./package-lock.json pi@homebridge.local:~/work/hillstate-homebridge/`
+    `rsync -av --exclude={'node_modules','.github','.git','src','test'} . pi@homebridge.local:~/work/hillstate-homebridge/`
 
 - Install only the packages that you need
 
@@ -19,3 +19,11 @@ These are notes taken while I work on this project. The official documentation i
 - Link the application to the homebridge application. You might have to restart Homebridge for the new plugin to show up. This step is incorrectly documented.
 
     `sudo hb-service link`
+
+You could simply run the following command:
+```
+npm run build &&\
+rsync -av --exclude={'node_modules','.github','.git','src','test'} . pi@homebridge.local:~/work/hillstate-homebridge/ &&\
+ssh pi@homebridge.local \
+"cd ~/work/hillstate-homebridge && sudo hb-service unlink && sudo hb-service link"
+```

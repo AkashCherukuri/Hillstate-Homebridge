@@ -7,7 +7,7 @@
     "type": "object",
     "required": [
       "username",
-      "passowrd",
+      "password",
       "dong",
       "ho"
     ],
@@ -16,22 +16,23 @@
       "username": {
         "title": "Hillstate IOT username",
         "type": "string",
-        "default": ""
+        "default": "Enter your username"
       },
       "password": {
         "title": "Hillstate IOT password",
         "type": "string",
-        "default": ""
+        "x_schema-form": {
+          "type": "password"
+        }
       },
       "dong": {
         "title": "Hillstate Dong number",
         "type": "number",
-        "default": ""
+        "default": "101"
       },
       "ho": {
         "title": "Hillstate Ho number",
-        "type": "number",
-        "default": ""
+        "type": "number"
       }
     }
   }

@@ -46,8 +46,10 @@ export class HillstateIOTHomebridgePlatform implements DynamicPlatformPlugin {
     // Instantiate the Hillstate API class
     this.hillstateAPI = new HillstateAPI(
       this.log,
-      101,
-      1715,
+      config.username,
+      config.password,
+      config.dong,
+      config.ho,
     );
     this.log.debug('Finished initializing platform:', this.config.name);
 
