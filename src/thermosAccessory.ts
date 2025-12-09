@@ -34,6 +34,22 @@ export class HillstateThermosPlatformAccessory {
     setInterval(()=>{
       this.airconState = this.platform.hillstateAPI.getAirconStat(this.airconId);
       this.heaterState = this.platform.hillstateAPI.getHeaterStat(this.heaterId);
+
+      // If both heater and cooler are ON, turn one off and call the function again
+      // Like, why would you ever need both of them to be on at the same time?
+      // Prioritize turning off the heater as it is less disruptive and set the state to COOL
+      (async function(ts: HillstateThermosPlatformAccessory) {
+        const currAirconState = await ts.airconState;
+        const currHeaterState = await ts.heaterState;
+        if (currAirconState.data.statusList[0].value === 'on' && currHeaterState.data.statusList[0].value === 'on') {
+          ts.platform.hillstateAPI.setHeaterStat(ts.heaterId, {
+            'command': 'power',
+            'value': 'off',
+          });
+        }
+      }(this));
+      
+
     }, 2*1000);
 
     this.service = this.accessory.getService(this.platform.Service.Thermostat) || this.accessory.addService(this.platform.Service.Thermostat);
