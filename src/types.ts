@@ -35,15 +35,17 @@ export type AirConMode =
     | 'dehumidify'
     | 'airwash'
 
+export interface deviceStatusCommand {
+    'command': string
+    'value': string
+}
+
 export interface deviceStatusResp {
     'resultStatus': string
     'transactionId': string
     'data': {
         'deviceType': string,
-        'statusList': Array<{
-            'command': string
-            'value':  string
-        }>
+        'statusList': Array<deviceStatusCommand>
         'deviceDetailName': string | undefined
         'id': string
         'state': string

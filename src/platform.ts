@@ -9,7 +9,7 @@ import { HillstateAPI } from './hillstate.js';
 import { deviceDiscoverResp } from './types.js';
 import { CONSTS } from './consts.js';
 import { HillstateFanPlatformAccessory } from './fanAccessory.js';
-import { HillstateAirconPlatformAccessory } from './airconAccessory.js';
+import { HillstateThermosPlatformAccessory } from './thermosAccessory.js';
 
 /**
  * HomebridgePlatform
@@ -72,21 +72,10 @@ export class HillstateIOTHomebridgePlatform implements DynamicPlatformPlugin {
    */
   configureAccessory(accessory: PlatformAccessory) {
     this.log.info('Loading accessory from cache:', accessory.displayName);
-
-    // add the restored accessory to the accessories cache, so we can track if it has already been registered
     this.accessories.set(accessory.UUID, accessory);
   }
 
-  /**
-   * This is an example method showing how to register discovered accessories.
-   * Accessories must only be registered once, previously created accessories
-   * must not be registered again to prevent "duplicate UUID" errors.
-   */
   discoverDevices() {
-    // EXAMPLE ONLY
-    // A real plugin you would discover accessories from the local network, cloud services
-    // or a user-defined array in the platform config.
-    
     const devicesPromise = this.hillstateAPI.discoverDevices();
 
     // Add the devices once the discover call returns the list of all the lights
@@ -109,9 +98,10 @@ export class HillstateIOTHomebridgePlatform implements DynamicPlatformPlugin {
           }
           break;
         case CONSTS.AIRCON_DEVICE_TYPE:
-          PlatformAccessory = HillstateAirconPlatformAccessory;
+          PlatformAccessory = HillstateThermosPlatformAccessory;
           break;
         default:
+          this.log.info(device.id, ' is not a aircon nor light');
           continue;
         }
       
@@ -131,64 +121,6 @@ export class HillstateIOTHomebridgePlatform implements DynamicPlatformPlugin {
       }
     });
 
-
-    // const heatingPromise = this.hillstateAPI.discoverDevices('heating');
-
-    // const totalFanPromise = this.hillstateAPI.discoverDevices('fan');
-
-    // // loop over the discovered devices and register each one if it has not already been registered
-    // for (const device of exampleDevices) {
-    //   // generate a unique id for the accessory this should be generated from
-    //   // something globally unique, but constant, for example, the device serial
-    //   // number or MAC address
-    //   const uuid = this.api.hap.uuid.generate(device.exampleUniqueId);
-
-    //   // see if an accessory with the same uuid has already been registered and restored from
-    //   // the cached devices we stored in the `configureAccessory` method above
-    //   const existingAccessory = this.accessories.get(uuid);
-
-    //   if (existingAccessory) {
-    //     // the accessory already exists
-    //     this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
-
-    //     // if you need to update the accessory.context then you should run `api.updatePlatformAccessories`. e.g.:
-    //     // existingAccessory.context.device = device;
-    //     // this.api.updatePlatformAccessories([existingAccessory]);
-
-    //     // create the accessory handler for the restored accessory
-    //     // this is imported from `platformAccessory.ts`
-    //     new HillstateIOTPlatformAccessory(this, existingAccessory);
-
-    //     // it is possible to remove platform accessories at any time using `api.unregisterPlatformAccessories`, e.g.:
-    //     // remove platform accessories when no longer present
-    //     // this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [existingAccessory]);
-    //     // this.log.info('Removing existing accessory from cache:', existingAccessory.displayName);
-    //   } else {
-    //     // the accessory does not yet exist, so we need to create it
-    //     this.log.info('Adding new accessory:', device.exampleDisplayName);
-
-    //     // create a new accessory
-    //     const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid);
-
-    //     // store a copy of the device object in the `accessory.context`
-    //     // the `context` property can be used to store any data about the accessory you may need
-    //     accessory.context.device = device;
-
-    //     // create the accessory handler for the newly create accessory
-    //     // this is imported from `platformAccessory.ts`
-    //     new HillstateIOTPlatformAcplatformAccessorycessory(this, accessory);
-
-    //     // link the accessory to your platform
-    //     this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-    //   }
-
-    //   // push into discoveredCacheUUIDs
-    //   this.discoveredCacheUUIDs.push(uuid);
-    // }
-
-    // you can also deal with accessories from the cache which are no longer present by removing them from Homebridge
-    // for example, if your plugin logs into a cloud account to retrieve a device list, and a user has previously removed a device
-    // from this cloud account, then this device will no longer be present in the device list but will still be in the Homebridge cache
     for (const [uuid, accessory] of this.accessories) {
       if (!this.discoveredCacheUUIDs.includes(uuid)) {
         this.log.info('Removing existing accessory from cache:', accessory.displayName);

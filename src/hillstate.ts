@@ -7,6 +7,7 @@ import {
   OnOrOff,
   deviceStatusResp,
   deviceDiscoverResp,
+  deviceStatusCommand,
 } from './types.js';
 
 export class HillstateAPI {
@@ -63,12 +64,22 @@ export class HillstateAPI {
     return await this.discoverDevicesInt(true);
   }
 
-  public async getAirconPower(aircon: string): Promise<boolean> {
-    return await this.getAirconPowerInt(true, aircon);
+  public async getAirconStat(aircon: string): Promise<deviceStatusResp> {
+    return this.getAirconStatInt(true, aircon);
   }
 
-  public async setAirconPower(aircon: string, cmd: OnOrOff): Promise<boolean> {
-    return await this.setAirconPowerInt(true, aircon, cmd);
+  public async setAirconStat(aircon: string, command: deviceStatusCommand) {
+    this.log.info('setting aircon '+aircon+' to '+JSON.stringify(command));
+    return this.setAirconStatInt(true, aircon, command);
+  }
+  
+  public async getHeaterStat(heater: string): Promise<deviceStatusResp> {
+    return this.getHeaterStatInt(true, heater);
+  }
+
+  public async setHeaterStat(heater: string, command: deviceStatusCommand) {
+    this.log.info('setting heater '+heater+' to '+JSON.stringify(command));
+    return this.setHeaterStatInt(true, heater, command);
   }
 
   // discoverDevicesInt returns a JSON of all of the devices in Hillstate after querying the API
@@ -99,15 +110,55 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return CONSTS.EMPTY_DEVICES_DISCOVER_RESP;
+      return Promise.reject(error);
     }
   }
 
-  private async setAirconPowerInt(first: boolean, aircon: string, cmd: OnOrOff): Promise<boolean> {
-    this.log.info('attempting to set the aircon to: ', cmd);
+  private async getHeaterStatInt(first: boolean, heater: string): Promise<deviceStatusResp> {
+    this.log.info('attempting to get heater info');
 
     try {
-      const airconResp = await got.put(CONSTS.HILLSTATE_AIRCON_URL + aircon, {
+      
+      const heaterGet = await got.get(CONSTS.HILLSTATE_HEATER_URL + heater, {
+        headers: {
+          'Cookie': this.sidCookie,
+          ...this.basicHeaders,
+        },
+      });
+
+      if (heaterGet.statusCode !== 200) {
+        this.log.error('getting heater status failed');
+        throw new Error('Error getting heater status');
+      }
+
+      const data: deviceStatusResp = JSON.parse(heaterGet.body as string);
+      return data;
+
+    } catch (error) {
+      if (first) {
+        this.log.info('attempting auth before re-attempting getting heater');
+        await this.authenticate();
+        return await this.getHeaterStatInt(false, heater);
+      }
+
+      this.log.error('getting heater failed after auth');
+      if (error instanceof Error) {
+        this.log.error(error.message);
+        this.log.error(error.stack??'stack trace undefined');
+      } else {
+        this.log.error('unknown error occured, dig deeper! Rock and Stone!');
+      }
+      return Promise.reject(error);
+    }
+  }
+
+  // !TODO: This function's parsing is very bad, but it works so I am not changing
+  private async setHeaterStatInt(first: boolean, heater: string, command: deviceStatusCommand): Promise<void> {
+    this.log.info('attempting to set heater info');
+
+    try {
+      
+      const heaterSet = await got.put(CONSTS.HILLSTATE_HEATER_URL + heater, {
         headers: {
           'Cookie': this.sidCookie,
           ...this.basicHeaders,
@@ -115,41 +166,37 @@ export class HillstateAPI {
         json: {
           'commandList': [
             {
-              'command': 'power',
-              'value': cmd,
+              'command': command.command,
+              'value': command.value,
             },
           ],
         },
-      }); 
-      
-      if (airconResp.statusCode !== 200) {
-        this.log.error('setting aircon failed');
-        throw new Error('Error setting aircon status');
+      });
+
+      if (heaterSet.statusCode !== 200) {
+        this.log.error('setting heater status failed');
+        throw new Error('Error setting heater status');
       }
-
-      this.log.info('aircon set to: ', cmd);
-      return true;
-
     } catch (error) {
       if (first) {
-        this.log.info('attempting auth before re-attempting setting aircon');
+        this.log.info('attempting auth before re-attempting setting heater');
         await this.authenticate();
-        return await this.setAirconPowerInt(false, aircon, cmd);
+        return await this.setHeaterStatInt(false, heater, command);
       }
 
-      this.log.error('setting aircon failed after auth');
+      this.log.error('setting heater failed after auth');
       if (error instanceof Error) {
         this.log.error(error.message);
         this.log.error(error.stack??'stack trace undefined');
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return false;
     }
   }
 
-  private async getAirconPowerInt(first: boolean, aircon: string): Promise<boolean> {
-    this.log.info('attempting to get Aircon info: ', aircon);
+  private async getAirconStatInt(first: boolean, aircon: string): Promise<deviceStatusResp> {
+    this.log.info('attempting to get aircon info');
+
     try {
       
       const airconGet = await got.get(CONSTS.HILLSTATE_AIRCON_URL + aircon, {
@@ -160,18 +207,18 @@ export class HillstateAPI {
       });
 
       if (airconGet.statusCode !== 200) {
-        this.log.error('getting aircon failed');
+        this.log.error('getting aircon status failed');
         throw new Error('Error getting aircon status');
       }
 
       const data: deviceStatusResp = JSON.parse(airconGet.body as string);
-      return data.data.statusList[0].value === 'on';
+      return data;
 
     } catch (error) {
       if (first) {
         this.log.info('attempting auth before re-attempting getting aircon');
         await this.authenticate();
-        return await this.getAirconPowerInt(false, aircon);
+        return await this.getAirconStatInt(false, aircon);
       }
 
       this.log.error('getting aircon failed after auth');
@@ -181,12 +228,52 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return false;
+      return Promise.reject(error);
     }
-
   }
 
-  //! TODO: Take light as an argument here!
+  // !TODO: This function's parsing is very bad, but it works so I am not changing
+  private async setAirconStatInt(first: boolean, aircon: string, command: deviceStatusCommand): Promise<void> {
+    this.log.info('attempting to set aircon info');
+
+    try {
+      
+      const airconSet = await got.put(CONSTS.HILLSTATE_AIRCON_URL + aircon, {
+        headers: {
+          'Cookie': this.sidCookie,
+          ...this.basicHeaders,
+        },
+        json: {
+          'commandList': [
+            {
+              'command': command.command,
+              'value': command.value,
+            },
+          ],
+        },
+      });
+
+      if (airconSet.statusCode !== 200) {
+        this.log.error('setting aircon status failed');
+        throw new Error('Error setting aircon status');
+      }
+    } catch (error) {
+      if (first) {
+        this.log.info('attempting auth before re-attempting setting aircon');
+        await this.authenticate();
+        return await this.setAirconStatInt(false, aircon, command);
+      }
+
+      this.log.error('setting aircon failed after auth');
+      if (error instanceof Error) {
+        this.log.error(error.message);
+        this.log.error(error.stack??'stack trace undefined');
+      } else {
+        this.log.error('unknown error occured, dig deeper! Rock and Stone!');
+      }
+    }
+  }
+
   // getLight gets the status of the light
   // returns True if the light is On, False if Off or there was an error
   private async getLightInt(first: boolean, light: string): Promise<boolean> {
@@ -223,11 +310,10 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return false;
+      return Promise.reject(error);
     }
   }
 
-  //! TODO: Take a light as an argument and use it to get the status of a lightbulb
   // setLight gets the status of the hardcoded lightbulb
   // If the call fails, attempt to authenticate and try again!
   private async setLightInt(first: boolean, light: string, cmd: OnOrOff): Promise<boolean> {
@@ -271,7 +357,7 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return false;
+      return Promise.reject(error);
     }
   }
 
@@ -333,8 +419,7 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-
-      return false;
+      return Promise.reject(error);
     }
   }
 }
