@@ -3,7 +3,7 @@ This file contains all the constants that are used in the application,
 and all the structs required for proper and clean requests to Hillstate API
 */
 
-import { deviceDiscoverResp } from './types.js';
+import { deviceDiscoverResp, deviceStatusResp } from './types.js';
 
 export abstract class CONSTS {
   static readonly LIGHT_DEVICE_TYPE: string = 'light';
@@ -27,6 +27,18 @@ export abstract class CONSTS {
     'data': {
       'totalCount': 0,
       'deviceList': [],
+    },
+  };
+
+  static readonly HILLSTATE_EMPTY_DEVICE_STATUS_RESP: deviceStatusResp = {
+    'resultStatus': '',
+    'transactionId': '',
+    'data': {
+      'deviceType': '',
+      'statusList': [],
+      'deviceDetailName': undefined,
+      'id': '',
+      'state': '',
     },
   };
 }

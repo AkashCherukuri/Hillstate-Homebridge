@@ -2,6 +2,7 @@ import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge
 
 import type { HillstateIOTHomebridgePlatform } from './platform.js';
 import { deviceStatusResp } from './types.js';
+import { CONSTS } from './consts.js';
 
 /**
  * ThermosAccessory automatically alternates between Heater/Cooler based on the set temperature
@@ -11,8 +12,8 @@ export class HillstateThermosPlatformAccessory {
   private airconId: string;
   private heaterId: string;
 
-  private airconState: Promise<deviceStatusResp>;
-  private heaterState: Promise<deviceStatusResp>;
+  private airconState: deviceStatusResp = CONSTS.HILLSTATE_EMPTY_DEVICE_STATUS_RESP;
+  private heaterState: deviceStatusResp = CONSTS.HILLSTATE_EMPTY_DEVICE_STATUS_RESP;
 
   constructor(
     private readonly platform: HillstateIOTHomebridgePlatform,
@@ -27,13 +28,10 @@ export class HillstateThermosPlatformAccessory {
     // Set aircon and heater IDs
     this.airconId = this.accessory.displayName;
     this.heaterId = '0'+((+this.accessory.displayName)-400).toString();
-
-    // Update the promises, and set the states to update every 2 seconds
-    this.airconState = this.platform.hillstateAPI.getAirconStat(this.airconId);
-    this.heaterState = this.platform.hillstateAPI.getHeaterStat(this.heaterId);
-    setInterval(()=>{
-      this.airconState = this.platform.hillstateAPI.getAirconStat(this.airconId);
-      this.heaterState = this.platform.hillstateAPI.getHeaterStat(this.heaterId);
+    
+    setInterval(async () => {
+      this.airconState = await this.platform.hillstateAPI.getAirconStat(this.airconId);
+      this.heaterState = await this.platform.hillstateAPI.getHeaterStat(this.heaterId);
 
       // If both heater and cooler are ON, turn one off and call the function again
       // Like, why would you ever need both of them to be on at the same time?
@@ -166,14 +164,14 @@ export class HillstateThermosPlatformAccessory {
     if (currHeaterState.data.statusList[0].value === 'on') {
       return currHeaterState.data.statusList[2].value;
     } else {
-      return currAirconState.data.statusList[4].value;
+      return currAirconState.data.statusList[3].value;
     }
   }
 
   async setTargetTemperature(value: CharacteristicValue) {
     // Actively fetch the statuses
-    this.airconState = this.platform.hillstateAPI.getAirconStat(this.airconId);
-    this.heaterState = this.platform.hillstateAPI.getHeaterStat(this.heaterId);
+    // this.airconState = this.platform.hillstateAPI.getAirconStat(this.airconId);
+    // this.heaterState = this.platform.hillstateAPI.getHeaterStat(this.heaterId);
 
     const currAirconState = await this.airconState;
     const currHeaterState = await this.heaterState;
