@@ -114,7 +114,8 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return Promise.reject(error);
+      // Return a safe empty response instead of rejecting to avoid unhandled promise rejections
+      return CONSTS.EMPTY_DEVICES_DISCOVER_RESP;
     }
   }
 
@@ -152,7 +153,8 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return Promise.reject(error);
+      // Return a safe empty device status instead of rejecting
+      return CONSTS.HILLSTATE_EMPTY_DEVICE_STATUS_RESP;
     }
   }
 
@@ -195,6 +197,8 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
+      // swallow error and return void to avoid crashing caller
+      return;
     }
   }
 
@@ -232,7 +236,8 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return Promise.reject(error);
+      // Return a safe empty device status instead of rejecting
+      return CONSTS.HILLSTATE_EMPTY_DEVICE_STATUS_RESP;
     }
   }
 
@@ -275,6 +280,8 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
+      // swallow error and return void to avoid crashing caller
+      return;
     }
   }
 
@@ -314,7 +321,8 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return Promise.reject(error);
+      // Return false on failure instead of rejecting
+      return false;
     }
   }
 
@@ -361,7 +369,8 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return Promise.reject(error);
+      // Return false instead of rejecting
+      return false;
     }
   }
 
@@ -423,7 +432,8 @@ export class HillstateAPI {
       } else {
         this.log.error('unknown error occured, dig deeper! Rock and Stone!');
       }
-      return Promise.reject(error);
+      // Return false instead of rejecting to keep callers safe
+      return false;
     }
   }
 }
