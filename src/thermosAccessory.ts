@@ -29,26 +29,11 @@ export class HillstateThermosPlatformAccessory {
     this.airconId = this.accessory.displayName;
     this.heaterId = '0'+((+this.accessory.displayName)-400).toString();
     
-    setInterval(async () => {
-      this.airconState = await this.platform.hillstateAPI.getAirconStat(this.airconId);
-      this.heaterState = await this.platform.hillstateAPI.getHeaterStat(this.heaterId);
-
-      // If both heater and cooler are ON, turn one off and call the function again
-      // Like, why would you ever need both of them to be on at the same time?
-      // Prioritize turning off the heater as it is less disruptive and set the state to COOL
-      (async function(ts: HillstateThermosPlatformAccessory) {
-        const currAirconState = await ts.airconState;
-        const currHeaterState = await ts.heaterState;
-        if (currAirconState.data.statusList[0].value === 'on' && currHeaterState.data.statusList[0].value === 'on') {
-          ts.platform.hillstateAPI.setHeaterStat(ts.heaterId, {
-            'command': 'power',
-            'value': 'off',
-          });
-        }
-      }(this));
-      
-
-    }, 2*1000);
+    // Fetch initial states
+    this.refreshStates();
+    
+    // Update states every 2 seconds in the background
+    setInterval(() => this.refreshStates(), 2*1000);
 
     this.service = this.accessory.getService(this.platform.Service.Thermostat) || this.accessory.addService(this.platform.Service.Thermostat);
 
@@ -71,7 +56,26 @@ export class HillstateThermosPlatformAccessory {
       .onSet(this.setTargetTemperature.bind(this));
   }
 
-  //  I dont like this, there could be a race condition here...
+  private async refreshStates(): Promise<void> {
+    try {
+      this.airconState = await this.platform.hillstateAPI.getAirconStat(this.airconId);
+      this.heaterState = await this.platform.hillstateAPI.getHeaterStat(this.heaterId);
+
+      // If both heater and cooler are ON, turn one off
+      // Like, why would you ever need both of them to be on at the same time?
+      // Prioritize turning off the heater as it is less disruptive and set the state to COOL
+      if (this.airconState.data.statusList[0].value === 'on' && 
+          this.heaterState.data.statusList[0].value === 'on') {
+        this.platform.hillstateAPI.setHeaterStat(this.heaterId, {
+          'command': 'power',
+          'value': 'off',
+        });
+      }
+    } catch (error) {
+      this.platform.log.error('Failed to refresh thermostat states:', error);
+      // Don't rethrow - let it fail silently and try again on next interval
+    }
+  }
   async getCurrentHeatingCoolingState(): Promise<CharacteristicValue> {
     // What if there is a fetch request between these two lines?
     const currAirconState: deviceStatusResp = await this.airconState;

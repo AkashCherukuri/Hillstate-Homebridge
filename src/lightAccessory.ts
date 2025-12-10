@@ -130,6 +130,7 @@ export class HillstateLightPlatformAccessory {
       this.cachedState = await this.platform.hillstateAPI.getLight(this.accessory.displayName);
     } catch (error) {
       this.platform.log.error('Failed to refresh light state:', error);
+      // Don't rethrow - let it fail silently and try again on next interval
     }
   }
 
