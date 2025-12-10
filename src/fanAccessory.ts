@@ -10,6 +10,7 @@ import { OnOrOff } from './types.js';
  */
 export class HillstateFanPlatformAccessory {
   private service: Service;
+  private cachedState: boolean = false;
 
   /**
    * These are just used to create a working example
@@ -34,6 +35,10 @@ export class HillstateFanPlatformAccessory {
     // you can create multiple services for each accessory
     
     this.service = this.accessory.getService(this.platform.Service.Fan) || this.accessory.addService(this.platform.Service.Fan);
+
+    // Fetch initial state and refresh every second in the background
+    this.refreshState();
+    setInterval(() => this.refreshState(), 1000);
 
     // if (accessory.context.device.CustomService) {
     //   // This is only required when using Custom Services and Characteristics not support by HomeKit
@@ -110,11 +115,22 @@ export class HillstateFanPlatformAccessory {
    */
   async setOn(value: CharacteristicValue) {
     const cmd:OnOrOff = value?'on':'off';
-    this.platform.hillstateAPI.setLight(this.accessory.displayName, cmd);
+    await this.platform.hillstateAPI.setLight(this.accessory.displayName, cmd);
     // implement your own code to turn your device on/off
     // this.exampleStates.On = value as boolean;
 
     this.platform.log.debug('Set Characteristic On ->', value);
+  }
+
+  /**
+   * Refresh device state in the background
+   */
+  private async refreshState(): Promise<void> {
+    try {
+      this.cachedState = await this.platform.hillstateAPI.getLight(this.accessory.displayName);
+    } catch (error) {
+      this.platform.log.error('Failed to refresh fan state:', error);
+    }
   }
 
   /**
@@ -133,15 +149,9 @@ export class HillstateFanPlatformAccessory {
    * this.service.updateCharacteristic(this.platform.Characteristic.On, true)
    */
   async getOn(): Promise<CharacteristicValue> {
-    // implement your own code to check if the device is on
-    
-    try {
-      const isOn = await this.platform.hillstateAPI.getLight(this.accessory.displayName) === true;
-      this.platform.log.debug('Get Characteristic On ->', isOn);
-      return isOn;
-    } catch (error) {
-      throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    }
+    // Return cached state immediately
+    this.platform.log.debug('Get Characteristic On ->', this.cachedState);
+    return this.cachedState;
     
     // const isOn = this.exampleStates.On;
 

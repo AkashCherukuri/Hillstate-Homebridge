@@ -49,7 +49,7 @@ export class HillstateAPI {
     this.log.info('Hillstate API initialized with encrypted credentials');
 
     this.authenticate();
-    setInterval(this.authenticate, 5*60*1000);
+    setInterval(() => this.authenticate(), 5*60*1000);
   }
 
   public async getLight(light: string): Promise<boolean> {
@@ -70,7 +70,9 @@ export class HillstateAPI {
 
   public async setAirconStat(aircon: string, command: deviceStatusCommand) {
     this.log.info('setting aircon '+aircon+' to '+JSON.stringify(command));
-    return this.setAirconStatInt(true, aircon, command);
+    return this.setAirconStatInt(true, aircon, command).catch(err => {
+      this.log.error('Failed to set aircon stat:', err);
+    });
   }
   
   public async getHeaterStat(heater: string): Promise<deviceStatusResp> {
@@ -79,7 +81,9 @@ export class HillstateAPI {
 
   public async setHeaterStat(heater: string, command: deviceStatusCommand) {
     this.log.info('setting heater '+heater+' to '+JSON.stringify(command));
-    return this.setHeaterStatInt(true, heater, command);
+    return this.setHeaterStatInt(true, heater, command).catch(err => {
+      this.log.error('Failed to set heater stat:', err);
+    });
   }
 
   // discoverDevicesInt returns a JSON of all of the devices in Hillstate after querying the API

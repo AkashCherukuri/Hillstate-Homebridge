@@ -10,8 +10,6 @@ export abstract class CONSTS {
   static readonly AIRCON_DEVICE_TYPE: string = 'aircon';
   static readonly VENT_DEVICE_TYPE: string = 'fan';
 
-  static readonly SESH_REFRESH_TIMER: number  = 5*60;
-
   static readonly AUTH_PUBLIC_KEY: string     = 'hTsEcret';
   static readonly HILLSTATE_LOGIN_URL: string = 'https://www2.hthomeservice.com/login';
   static readonly HILLSTATE_CTOC_URL: string  = 'https://www2.hthomeservice.com/getctoctoken';
