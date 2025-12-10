@@ -1,6 +1,9 @@
 <p align="center">
 
 <img src="https://github.com/homebridge/branding/raw/latest/logos/homebridge-wordmark-logo-vertical.png" width="150">
+&nbsp;
+
+<img src="https://www.apple.com/v/home-app/h/images/overview/home_icon__fqdsai7nyfma_large_2x.png" width="150">
 
 </p>
 
