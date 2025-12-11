@@ -167,7 +167,7 @@ export class HillstateAPI {
 
   // !TODO: This function's parsing is very bad, but it works so I am not changing
   private async setHeaterStatInt(first: boolean, heater: string, command: deviceStatusCommand): Promise<void> {
-    this.log.debug(`[HillstateAPI] setHeaterStatInt called for heater: ${heater} with command: ${JSON.stringify(command)}`);
+    this.log.info(`[HillstateAPI] setHeaterStatInt called for heater: ${heater} with command: ${JSON.stringify(command)}`);
     
     // Capture the current cookie at the start of the method
     const currentCookie = this.sidCookie;
@@ -304,7 +304,7 @@ export class HillstateAPI {
   // getLight gets the status of the light
   // returns True if the light is On, False if Off or there was an error
   private async getLightInt(first: boolean, light: string): Promise<boolean> {
-    this.log.info(`[HillstateAPI] getLightInt called for light: ${light}`);
+    this.log.debug(`[HillstateAPI] getLightInt called for light: ${light}`);
     
     // Capture the current cookie at the start of the method
     const currentCookie = this.sidCookie;
@@ -398,15 +398,16 @@ export class HillstateAPI {
 
   // authenticate logs in to Hillstate API with encrypted credentials and updates the current sessionID variable
   private async authenticate(failedCookie?: string): Promise<boolean> {
+    this.log.debug(`[HillstateAPI] authenticate method called with failedCookie: ${failedCookie}`);
     // If a failed cookie is provided and it doesn't match the current cookie, don't re-authenticate
     if (failedCookie && failedCookie !== this.sidCookie) {
-      this.log.info('[HillstateAPI] Skipping authentication - failed cookie does not match current cookie');
+      this.log.debug('[HillstateAPI] Skipping authentication - failed cookie does not match current cookie');
       return false;
     }
     
     // If an authentication is already in progress, wait for it to complete
     if (this.authPromise) {
-      this.log.info('[HillstateAPI] Authentication already in progress, waiting for completion...');
+      this.log.debug('[HillstateAPI] Authentication already in progress, waiting for completion...');
       return await this.authPromise;
     }
     
@@ -424,7 +425,7 @@ export class HillstateAPI {
   
   // Actual authentication implementation
   private async performAuthentication(): Promise<boolean> {
-    this.log.info('[HillstateAPI] authentication method initialized...');
+    this.log.debug('[HillstateAPI] authentication method initialized...');
 
     try {
       const authResp = await got.post(CONSTS.HILLSTATE_LOGIN_URL, {
@@ -446,10 +447,8 @@ export class HillstateAPI {
       const authRespCookie = authResp.headers['set-cookie'] ?? '';
       this.sidCookie = authRespCookie.toString().split(';')[0];
 
-      this.log.info('[HillstateAPI] authentication successful, sid cookie: ', this.sidCookie);
-
       // Get the CTOC Token
-      this.log.info('[HillstateAPI] setting CTOC token...');
+      this.log.debug('[HillstateAPI] setting CTOC token...');
 
       const ctocResp = await got.post(CONSTS.HILLSTATE_CTOC_URL, {
         headers: {
@@ -470,7 +469,7 @@ export class HillstateAPI {
         throw new Error('CTOC Token Registration Error');
       }
 
-      this.log.info('[HillstateAPI] authentication successful!');
+      this.log.info(`[HillstateAPI] authentication successful, Auth cookie: ${this.sidCookie}`);
       return true;
     } catch (error) {
       this.log.error('[HillstateAPI] authentication failed');
