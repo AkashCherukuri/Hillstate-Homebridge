@@ -67,7 +67,7 @@ This also automatically turns off one of your AC/Heater in a room if both are on
 | Hillstate IOT username          | The username set when you registered with Hillstate IOT. This is the username used with [HT Home Service](https://www2.hthomeservice.com/login)              |
 | Hillstate IOT password          | The password corresponding to the above username                                                                                                             |
 | Hillstate Dong number           | Your Dong number, 101 for everyone at the time of writing                                                                                                    |
-| Hillstate Ho number             | Your apartment number. Can't help you if you don't know where live.                                                                                          |
+| Hillstate Ho number             | Your apartment number. Can't help you if you don't know where you live.                                                                                      |
 | Bathroom Vent name on Hillstate | Optional. The name of the "light" on [HT Home Service](https://www2.hthomeservice.com/login) that corresponds to your bathroom ventilation. Purely cosmetic. |
 
 ## Limitations
