@@ -39,4 +39,7 @@ export abstract class CONSTS {
       'state': '',
     },
   };
+
+  static readonly AUTH_TOKEN_EXPIRY_MS: number = 15 * 60 * 1000; // 15 minutes
+  static readonly THERMOS_STATE_EXPIRY_MS: number = 1000; // 1 second
 }
