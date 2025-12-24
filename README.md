@@ -70,6 +70,12 @@ This also automatically turns off one of your AC/Heater in a room if both are on
 | Hillstate Ho number             | Your apartment number. Can't help you if you don't know where live.                                                                                          |
 | Bathroom Vent name on Hillstate | Optional. The name of the "light" on [HT Home Service](https://www2.hthomeservice.com/login) that corresponds to your bathroom ventilation. Purely cosmetic. |
 
+## Case
+
+`raspberry_pi_zero_w2_case.3mf` is a case that I have remixed and printed. 
+
+![Printed Case](raspberry_case_image.jpeg)
+
 ## Limitations
 
 - Heater/AC in a single room are controlled by a unified Thermostat to reduce redundancy. The `AUTO` setting in thermostat doesn't correspond to anything and just throws an error.
