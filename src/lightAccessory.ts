@@ -23,7 +23,7 @@ export class HillstateLightPlatformAccessory {
 
     this.service.setCharacteristic(
       this.platform.Characteristic.Name,
-      accessory.context.device.id
+      accessory.context.device.id,
     );
 
     this.lightId = this.accessory.displayName;

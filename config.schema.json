@@ -37,7 +37,7 @@
       "bathroomVentName": {
         "title": "Bathroom Vent name on Hillstate",
         "type": "string",
-        "default": "침실2-2"
+        "default": "주방1-4"
       }
     }
   }
