@@ -119,7 +119,7 @@ export class HillstateAPI {
   private async authenticate(calleeCookie: string = '') : Promise<string> {
     // Get read lock and check authentication status
     {
-      using _ = await this.authRWMutex.obtainRO();
+      using _ = await this.authRWMutex.lockRO();
       if (
         calleeCookie !== this.sidCookie &&                             // Check if stored cookie has been refreshed by another thread
         this.sidCookie !== '' && this.lastAuthTime !== -1 &&           // Check if token and time exist
@@ -132,7 +132,7 @@ export class HillstateAPI {
 
     // Get write lock to perform authentication
     {
-      using _ = await this.authRWMutex.obtainRW();
+      using _ = await this.authRWMutex.lockRW();
       
       // Double-check authentication status after acquiring write lock
       if (

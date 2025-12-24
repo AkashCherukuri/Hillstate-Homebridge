@@ -27,7 +27,7 @@ export class HillstateThermosPlatformAccessory {
   private async updateCache(): Promise<[deviceStatusResp, deviceStatusResp]> {
     // Get the read lock and check if the data is outdated
     {
-      using _ = await this.stateRWMutex.obtainRO();
+      using _ = await this.stateRWMutex.lockRO();
       if (
         this.lastStateFetch !== -1 &&
         (Date.now() - this.lastStateFetch) < CONSTS.THERMOS_STATE_EXPIRY_MS
@@ -39,7 +39,7 @@ export class HillstateThermosPlatformAccessory {
 
     // Get the write lock and attempt to update the cached data
     {
-      using _ = await this.stateRWMutex.obtainRW();
+      using _ = await this.stateRWMutex.lockRW();
 
       // Double-check if the state is outdated, this could have been updated by another thread
       if (
