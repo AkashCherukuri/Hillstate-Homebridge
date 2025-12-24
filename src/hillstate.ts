@@ -1,6 +1,6 @@
 import { AES } from "crypto-ts";
 import { Logging } from 'homebridge';
-import { Mutex, MutexRW } from 'mutex-ts';
+import { MutexRW } from 'mutex-ts';
 
 import { CONSTS } from "./consts.js";
 import {
@@ -12,7 +12,7 @@ import { got } from "got";
 
 /*
   TODO
-  - Perform reauthentication only when authentication errors are thrown, not for every error
+  - Perform reauthentication only when 40X is returned from requests, not for every error
     I think this can be done using Result types?
 */
 
