@@ -1,7 +1,6 @@
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 
 import type { HillstateIOTHomebridgePlatform } from './platform.js';
-import { OnOrOff } from './types.js';
 
 /*  HillstateLightPlatformAccessory is responsible for fetching light data from the main API
  *  The requests are not asynchronous because HillstateAPI is not asynchronous.
@@ -30,18 +29,16 @@ export class HillstateLightPlatformAccessory {
     this.lightId = this.accessory.displayName;
 
     this.service.getCharacteristic(this.platform.Characteristic.On)
-      .onSet(this.setOn.bind(this)) // SET - bind to the `setOn` method below
+      .onSet(this.setOn.bind(this))  // SET - bind to the `setOn` method below
       .onGet(this.getOn.bind(this)); // GET - bind to the `getOn` method below
   }
 
-  async setOn(value: CharacteristicValue) {
-    const cmd:OnOrOff = value?'on':'off';
-    await this.platform.hillstateAPI.setLight(this.lightId, cmd);
-
+  async setOn(value: CharacteristicValue) { 
+    await this.platform.hillstateAPI.setLight(this.lightId, value as boolean);
     this.platform.log.info('Light ', this.lightId, 'set to ', value);
   }
 
   async getOn(): Promise<CharacteristicValue> {
-    return this.platform.hillstateAPI.getLight(this.lightId)
+    return this.platform.hillstateAPI.getLight(this.lightId);
   }
 }

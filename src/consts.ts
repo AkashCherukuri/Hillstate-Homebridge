@@ -39,4 +39,6 @@ export abstract class CONSTS {
       'state': '',
     },
   };
+
+  static readonly AUTH_TOKEN_EXPIRY_MS: number = 15 * 60 * 1000; // 15 minutes
 }

@@ -30,9 +30,11 @@
     "watch": "npm run build && npm link && nodemon"
   },
   "dependencies": {
+    "async-mutex": "^0.5.0",
     "crypto-ts": "^1.0.2",
     "got": "^14.6.5",
-    "homebridge-lib": "^7.1.12"
+    "homebridge-lib": "^7.1.12",
+    "mutex-ts": "^1.2.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
