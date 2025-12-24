@@ -1,5 +1,5 @@
 import { Logging } from 'homebridge';
-import { MutexRW } from 'mutex-ts';
+import { MutexRW } from 'async-ts';
 
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 

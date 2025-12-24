@@ -1,6 +1,6 @@
 import { AES } from "crypto-ts";
 import { Logging } from 'homebridge';
-import { MutexRW } from 'mutex-ts';
+import { MutexRW } from 'async-ts';
 
 import { CONSTS } from "./consts.js";
 import {
