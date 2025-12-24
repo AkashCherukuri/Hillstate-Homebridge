@@ -1,3 +1,5 @@
+import { MutexRW } from 'async-ts';
+
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 
 import type { HillstateIOTHomebridgePlatform } from './platform.js';
@@ -11,13 +13,56 @@ export class HillstateThermosPlatformAccessory {
   private service: Service;
   private airconId: string;
   private heaterId: string;
-  
-  // Caching properties to reduce redundant fetches
-  private lastFetchTime: number = 0;
-  private stateOutdated: boolean = true;
-  private cachedAirconState: deviceStatusResp = CONSTS.HILLSTATE_EMPTY_DEVICE_STATUS_RESP;
+
+  private stateRWMutex: MutexRW               = new MutexRW();
+  // DO NOT USE cachedHeaterState and cachedAirconState DIRECTLY!!!! 
+  // ALWAYS GET THEM THROUGH updateCache() TO FORCE UPDATE!!!!
   private cachedHeaterState: deviceStatusResp = CONSTS.HILLSTATE_EMPTY_DEVICE_STATUS_RESP;
-  private readonly CACHE_DURATION: number = 2000; // 2 seconds
+  private cachedAirconState: deviceStatusResp = CONSTS.HILLSTATE_EMPTY_DEVICE_STATUS_RESP;
+  private lastStateFetch: number              = -1;
+
+  // updateCache fetches the new states if the saved data is outdated
+  private async updateCache(): Promise<[deviceStatusResp, deviceStatusResp]> {
+    // Get the read lock and check if the data is outdated
+    {
+      using _ = await this.stateRWMutex.lockRO();
+      if (
+        this.lastStateFetch !== -1 &&
+        (Date.now() - this.lastStateFetch) < CONSTS.THERMOS_STATE_EXPIRY_MS
+      ) {
+        this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}] Using cached data for state fetch`);
+        return [this.cachedAirconState, this.cachedHeaterState];
+      }
+    }
+
+    // Get the write lock and attempt to update the cached data
+    {
+      using _ = await this.stateRWMutex.lockRW();
+
+      // Double-check if the state is outdated, this could have been updated by another thread
+      if (
+        this.lastStateFetch !== -1 &&
+        (Date.now() - this.lastStateFetch) < CONSTS.THERMOS_STATE_EXPIRY_MS
+      ) {
+        this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}] Using cached data for state fetch`);
+        return [this.cachedAirconState, this.cachedHeaterState];
+      }
+
+      this.platform.log.info(`[Aircon ${this.airconId}, Heater ${this.heaterId}] Updating cached data...`);
+      
+      // Simultaneously fetch and wait for both aircon and heater state
+      await Promise.all([
+        this.platform.hillstateAPI.getAirCon(this.airconId),
+        this.platform.hillstateAPI.getHeater(this.heaterId),
+      ]).then((values) => {
+        this.cachedAirconState = values[0];
+        this.cachedHeaterState = values[1];
+        this.lastStateFetch    = Date.now();
+      });
+
+      return [this.cachedAirconState, this.cachedHeaterState];
+    }
+  }
 
   constructor(
     private readonly platform: HillstateIOTHomebridgePlatform,
@@ -54,54 +99,9 @@ export class HillstateThermosPlatformAccessory {
       .onSet(this.setTargetTemperature.bind(this));
   }
 
-  // fetchStates returns the cached states if the last fetch was within the CACHE_DURATION
-  // A new request is made if the cache has expired, or if a set function was called previously.
-  private async fetchStates() {
-    const now = Date.now();
-    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: checking cache freshness`)
-
-    // Check if we need to fetch new data
-    if (!this.stateOutdated && (now - this.lastFetchTime) < this.CACHE_DURATION) {
-      this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: state cache not outdated!`)
-      // Return cached data
-      return {
-        airconState: this.cachedAirconState,
-        heaterState: this.cachedHeaterState
-      };
-    }
-    
-    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: state cache outdated, fetching`)
-
-    // Fetch new data
-    try {
-      const [airconState, heaterState] = await Promise.all([
-        this.platform.hillstateAPI.getAirconStat(this.airconId),
-        this.platform.hillstateAPI.getHeaterStat(this.heaterId)
-      ]);
-      
-      // Update cache
-      this.cachedAirconState = airconState;
-      this.cachedHeaterState = heaterState;
-      this.lastFetchTime = now;
-      this.stateOutdated = false;
-      
-      return {
-        airconState,
-        heaterState
-      };
-    } catch (error) {
-      this.platform.log.error('Failed to fetch thermostat states:', error);
-      // Return cached data even if fetch failed
-      return {
-        airconState: this.cachedAirconState,
-        heaterState: this.cachedHeaterState
-      };
-    }
-  }
-
   async getCurrentHeatingCoolingState(): Promise<CharacteristicValue> {
-    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: getCurrentHeatingCoolingState called`)
-    const { airconState, heaterState } = await this.fetchStates();
+    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: getCurrentHeatingCoolingState called`);
+    const [ airconState, heaterState ] = await this.updateCache();
 
     // If both heater and cooler were on, getTargetHeatingCoolingState would turn the heater off
     if (airconState.data.statusList[0].value === 'on') {
@@ -113,8 +113,8 @@ export class HillstateThermosPlatformAccessory {
   }
 
   async getTargetHeatingCoolingState(): Promise<CharacteristicValue> {
-    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: getTargetHeatingCoolingState called`)
-    const { airconState, heaterState } = await this.fetchStates();
+    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: getTargetHeatingCoolingState called`);
+    const [ airconState, heaterState ] = await this.updateCache();
     
     // If both AC and heater are on, turn the heater off.
     if (airconState.data.statusList[0].value === 'on' && heaterState.data.statusList[0].value === 'on') {
@@ -133,7 +133,7 @@ export class HillstateThermosPlatformAccessory {
   }
 
   async setTargetHeatingCoolingState(state: CharacteristicValue) {
-    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: setTargetHeatingCoolingState called with ${state}`)
+    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: setTargetHeatingCoolingState called with ${state}`);
     
     // If set to AUTO, log an error and return; refusing to acknowledge state change
     if (state === this.platform.Characteristic.TargetHeatingCoolingState.AUTO) {
@@ -146,36 +146,33 @@ export class HillstateThermosPlatformAccessory {
     let heaterProm: Promise<void> = Promise.resolve();
 
     if (state === this.platform.Characteristic.TargetHeatingCoolingState.OFF) {
-      airconProm = this.platform.hillstateAPI.setAirconStat(this.airconId, {
+      airconProm = this.platform.hillstateAPI.setAirCon(this.airconId, {
         'command': 'power',
         'value': 'off',
       });
-      heaterProm = this.platform.hillstateAPI.setHeaterStat(this.heaterId, {
+      heaterProm = this.platform.hillstateAPI.setHeater(this.heaterId, {
         'command': 'power',
         'value': 'off',
       });
     } else if (state === this.platform.Characteristic.TargetHeatingCoolingState.COOL) {
-      airconProm = this.platform.hillstateAPI.setAirconStat(this.airconId, {
+      airconProm = this.platform.hillstateAPI.setAirCon(this.airconId, {
         'command': 'power',
         'value': 'on',
       });
-      heaterProm = this.platform.hillstateAPI.setHeaterStat(this.heaterId, {
+      heaterProm = this.platform.hillstateAPI.setHeater(this.heaterId, {
         'command': 'power',
         'value': 'off',
       });
     } else if (state === this.platform.Characteristic.TargetHeatingCoolingState.HEAT) {
-      airconProm = this.platform.hillstateAPI.setAirconStat(this.airconId, {
+      airconProm = this.platform.hillstateAPI.setAirCon(this.airconId, {
         'command': 'power',
         'value': 'off',
       });
-      heaterProm = this.platform.hillstateAPI.setHeaterStat(this.heaterId, {
+      heaterProm = this.platform.hillstateAPI.setHeater(this.heaterId, {
         'command': 'power',
         'value': 'on',
       });
     }
-
-    // Mark state as outdated after setting
-    this.stateOutdated = true;
 
     // Await the devices to change states as requested
     await Promise.all([
@@ -185,16 +182,16 @@ export class HillstateThermosPlatformAccessory {
   }
 
   async getCurrentTemperature(): Promise<CharacteristicValue> {
-    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: getCurrentTemperature called`)
+    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: getCurrentTemperature called`);
 
-    const { airconState } = await this.fetchStates();
+    const [ airconState, _ ] = await this.updateCache();
     return airconState.data.statusList[4].value;
   }
 
   async getTargetTemperature(): Promise<CharacteristicValue> {
-    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: getTargetTemperature called`)
+    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: getTargetTemperature called`);
 
-    const { airconState, heaterState } = await this.fetchStates();
+    const [ airconState, heaterState ] = await this.updateCache();
 
     // Return the heater's temp if its on, aircon's temp otherwise
     if (heaterState.data.statusList[0].value === 'on') {
@@ -205,25 +202,24 @@ export class HillstateThermosPlatformAccessory {
   }
 
   async setTargetTemperature(value: CharacteristicValue) {
-    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: setTargetTemperature called with ${value}`)
+    this.platform.log.debug(`[Aircon ${this.airconId}, Heater ${this.heaterId}]: setTargetTemperature called with ${value}`);
 
-    const { airconState, heaterState } = await this.fetchStates();
+    const [ airconState, heaterState ] = await this.updateCache();
     const roundedTemp: string = Math.round(Number(value)).toString();
     let cmd: Promise<void> = Promise.resolve();
 
     if (airconState.data.statusList[0].value === 'on') {
-      cmd = this.platform.hillstateAPI.setAirconStat(this.airconId, {
+      cmd = this.platform.hillstateAPI.setAirCon(this.airconId, {
         'command': 'setTemperature',
         'value': roundedTemp,
       });
     } else if (heaterState.data.statusList[0].value === 'on') {
-      cmd = this.platform.hillstateAPI.setHeaterStat(this.heaterId, {
+      cmd = this.platform.hillstateAPI.setHeater(this.heaterId, {
         'command': 'setTemperature',
         'value': roundedTemp,
       });
     }
 
-    this.stateOutdated = true;
-    await cmd
+    await cmd;
   }
 }

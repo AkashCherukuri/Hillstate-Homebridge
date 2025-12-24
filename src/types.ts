@@ -20,10 +20,6 @@ export interface deviceDiscoverResp {
     }
 }
 
-export type OnOrOff = 
-    | 'on'
-    | 'off'
-
 export type AirConWind = 
     | 'light'
     | 'mid'
