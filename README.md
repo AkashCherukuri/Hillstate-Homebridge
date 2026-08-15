@@ -50,15 +50,20 @@ This also automatically turns off one of your AC/Heater in a room if both are on
 
 5. Copy the build files over to your raspberry pi
    ```
-   rsync -av --exclude={'node_modules','.github','.git','src','test'} . pi@homebridge.local:~/work/hillstate-homebridge/
+   rsync -av --delete --exclude={'node_modules','.github','.git','.claude','src','test'} . pi@homebridge.local:~/work/hillstate-homebridge/
    ```
 
 6. Connect to your raspberry pi, install only required packages and link it with homebridge
    ```
    <on your raspberry pi>
-   npm install --only=production
+   export PATH=/opt/homebridge/bin:$PATH
+   npm install --omit=dev
    sudo hb-service link
    ```
+   Note that `node` and `npm` are not on the `pi` user's `PATH` — the Homebridge
+   install ships its own copies under `/opt/homebridge/bin`. Putting that directory
+   on `PATH` is required rather than optional: calling `/opt/homebridge/bin/npm` by
+   absolute path still fails, because its shebang resolves `node` via `/usr/bin/env`.
 
 7. On your PC, open `homebridge.local` in your browser and login. You should be able to see the *Hillstate IOT Plugin* in the plugins tab. Click on plugin config, edit the config accordingly and then install it!
 

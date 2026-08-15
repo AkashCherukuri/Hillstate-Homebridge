@@ -2,8 +2,9 @@ import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge
 
 import type { HillstateIOTHomebridgePlatform } from './platform.js';
 
-/*  HillstateLightPlatformAccessory is responsible for fetching light data from the main API
- *  The requests are not asynchronous because HillstateAPI is not asynchronous.
+/*  HillstateLightPlatformAccessory is responsible for fetching light data from the main API.
+ *  Reads go through HillstateAPI's shared cache, so a HomeKit poll covering every
+ *  light does not turn into one HTTP request per accessory.
  */
 export class HillstateLightPlatformAccessory {
   private service: Service;
@@ -33,12 +34,20 @@ export class HillstateLightPlatformAccessory {
       .onGet(this.getOn.bind(this)); // GET - bind to the `getOn` method below
   }
 
-  async setOn(value: CharacteristicValue) { 
-    await this.platform.hillstateAPI.setLight(this.lightId, value as boolean);
+  async setOn(value: CharacteristicValue) {
+    try {
+      await this.platform.hillstateAPI.setLight(this.lightId, value as boolean);
+    } catch (error) {
+      throw this.platform.communicationFailure(`[Light ${this.lightId}] failed to set power`, error);
+    }
     this.platform.log.info('Light ', this.lightId, 'set to ', value);
   }
 
   async getOn(): Promise<CharacteristicValue> {
-    return this.platform.hillstateAPI.getLight(this.lightId);
+    try {
+      return await this.platform.hillstateAPI.getLight(this.lightId);
+    } catch (error) {
+      throw this.platform.communicationFailure(`[Light ${this.lightId}] failed to read power`, error);
+    }
   }
 }

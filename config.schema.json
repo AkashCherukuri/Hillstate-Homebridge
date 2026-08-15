@@ -28,7 +28,7 @@
       "dong": {
         "title": "Hillstate Dong number",
         "type": "number",
-        "default": "101"
+        "default": 101
       },
       "ho": {
         "title": "Hillstate Ho number",

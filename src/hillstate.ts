@@ -1,20 +1,24 @@
-import { AES } from "crypto-ts";
+import { AES } from 'crypto-ts';
 import { Logging } from 'homebridge';
-import { MutexRW } from 'async-ts';
+import { got, HTTPError } from 'got';
 
-import { CONSTS } from "./consts.js";
+import { CONSTS } from './consts.js';
 import {
-  deviceStatusResp,
   deviceDiscoverResp,
   deviceStatusCommand,
+  deviceStatusResp,
+  statusIsOn,
 } from './types.js';
-import { got } from "got";
 
-/*
-  TODO
-  - Perform reauthentication only when 40X is returned from requests, not for every error
-    I think this can be done using Result types?
+/* isSessionExpired reports whether an error means the server rejected our session
+   cookie, as opposed to a network fault or a server-side failure. Only the former
+   is worth re-authenticating for; treating every error as an expired session is
+   what previously turned a brief outage into a login storm.
 */
+function isSessionExpired(error: unknown): boolean {
+  return error instanceof HTTPError
+    && (error.response.statusCode === 401 || error.response.statusCode === 403);
+}
 
 export class HillstateAPI {
   private basicHeaders = {
@@ -32,38 +36,54 @@ export class HillstateAPI {
 
   private encryptedUsername: string;
   private encryptedPassword: string;
-  // private dong: number;
-  // private ho: number;
 
-  // authRWMutex is used to check auth status concurrently
-  private authRWMutex = new MutexRW();
-  private sidCookie: string = '';
-  private lastAuthTime: number = -1;
+  /* Session state.
 
-
-  /* Constructor implicitly initializes dong and ho
-     username and password are encrypted before being stored
+     authPromise is shared by every concurrent caller, so a burst of requests
+     triggers exactly one login. authGeneration identifies which session a caller
+     used, so that N simultaneous 401s cause one refresh rather than N.
   */
+  private authPromise: Promise<string> | null = null;
+  private authGeneration: number = 0;
+  private sessionExpiresAt: number = 0;
+
+  /* Device state cache.
+
+     stateCache holds recently fetched status lists; inFlight collapses concurrent
+     reads of the same device onto a single request.
+  */
+  private stateCache = new Map<string, { statusList: Array<deviceStatusCommand>; fetchedAt: number }>();
+  private inFlight = new Map<string, Promise<Array<deviceStatusCommand>>>();
+
+  /* Outbound request limiter. */
+  private activeRequests: number = 0;
+  private waitingForSlot: Array<() => void> = [];
+
   constructor(
     private readonly log: Logging,
-    private readonly username: string,
-    private readonly password: string,
+    username: string,
+    password: string,
     private readonly dong: number,
-    private readonly ho: number
+    private readonly ho: number,
   ) {
     this.encryptedUsername = AES.encrypt(username, CONSTS.AUTH_PUBLIC_KEY).toString();
     this.encryptedPassword = AES.encrypt(password, CONSTS.AUTH_PUBLIC_KEY).toString();
 
-    this.authenticate();
-
-    this.log.info(`[HillstateAPI] HS Class initialized`);
+    // No eager authenticate() here on purpose. It used to run un-awaited, so a
+    // login failure at boot — likely on a Pi, where Homebridge can start before
+    // Wi-Fi is up — became an unhandled rejection that killed the process.
+    // Every request path authenticates lazily instead.
+    this.log.info('[HillstateAPI] HS Class initialized');
   }
 
   // ----------------------------
   // ----- Discover method ------
   // ----------------------------
+
   public async discoverDevices(): Promise<deviceDiscoverResp> {
-    return await this.discoverDevicesInt('');
+    this.log.debug('[HillstateAPI] Discovering devices');
+    const body = await this.withSession((cookie) => this.send('GET', CONSTS.HILLSTATE_DISCOVER_DEVICES_URL, cookie));
+    return JSON.parse(body) as deviceDiscoverResp;
   }
 
   // ----------------------------
@@ -71,255 +91,270 @@ export class HillstateAPI {
   // ----------------------------
 
   public async getLight(light: string): Promise<boolean> {
-    const lightStatus = await this.getDeviceStatusInt(CONSTS.HILLSTATE_LIGHT_URL, light, '');
-    return lightStatus.data.statusList[0].value === 'on';
+    return statusIsOn(await this.getDeviceState(CONSTS.HILLSTATE_LIGHT_URL, light));
   }
 
-  public async setLight(light: string, state: boolean) {
-    const commandBody: deviceStatusCommand = {
+  public async setLight(light: string, state: boolean): Promise<void> {
+    await this.setDeviceStatus(CONSTS.HILLSTATE_LIGHT_URL, light, {
       command: 'power',
       value: state ? 'on' : 'off',
-    };
-    await this.setDeviceStatusInt(CONSTS.HILLSTATE_LIGHT_URL, light, commandBody, '');
+    });
   }
 
   // -----------------------------
   // ---- Aircon API methods -----
   // -----------------------------
 
-  public async getAirCon(aircon: string): Promise<deviceStatusResp> { 
-    return await this.getDeviceStatusInt(CONSTS.HILLSTATE_AIRCON_URL, aircon, '');
+  public async getAirCon(aircon: string): Promise<Array<deviceStatusCommand>> {
+    return this.getDeviceState(CONSTS.HILLSTATE_AIRCON_URL, aircon);
   }
 
-  public async setAirCon(aircon: string, commandBody: deviceStatusCommand) {
-    await this.setDeviceStatusInt(CONSTS.HILLSTATE_AIRCON_URL, aircon, commandBody, '');
+  public async setAirCon(aircon: string, commandBody: deviceStatusCommand): Promise<void> {
+    await this.setDeviceStatus(CONSTS.HILLSTATE_AIRCON_URL, aircon, commandBody);
   }
 
   // -----------------------------
   // ---- Heater API methods -----
   // -----------------------------
 
-  public async getHeater(heater: string): Promise<deviceStatusResp> { 
-    return await this.getDeviceStatusInt(CONSTS.HILLSTATE_HEATER_URL, heater, '');
+  public async getHeater(heater: string): Promise<Array<deviceStatusCommand>> {
+    return this.getDeviceState(CONSTS.HILLSTATE_HEATER_URL, heater);
   }
 
-  public async setHeater(heater: string, commandBody: deviceStatusCommand) {
-    await this.setDeviceStatusInt(CONSTS.HILLSTATE_HEATER_URL, heater, commandBody, '');
+  public async setHeater(heater: string, commandBody: deviceStatusCommand): Promise<void> {
+    await this.setDeviceStatus(CONSTS.HILLSTATE_HEATER_URL, heater, commandBody);
   }
 
-  /* authenticate with Hillstate server if the token is expired or is not present
-  Returns the authentication cookie string on successful authentication
+  // -----------------------------
+  // ------ Device state ---------
+  // -----------------------------
 
-  authentication is performed if either:
-    1. Prev authentication token is expired (based on AUTH_TOKEN_EXPIRY_MS)
-    2. calleeCookie is different from the stored sidCookie, implying that another thread has refreshed the cookie 
+  /* getDeviceState returns a device's status list, reusing a recent result when
+     one is available and otherwise sharing a single request between all callers
+     asking for the same device.
 
-  This uses a ReadWrite Mutex to ensure that authentication is only done when necessary.
+     This matters because HomeKit reads every characteristic of every accessory
+     at once: a thermostat alone issues four reads that resolve to two devices.
+     The discover endpoint would be the natural place to fetch everything in one
+     call, but the live API returns an empty statusList there, so state has to be
+     collected per-device.
   */
-  private async authenticate(calleeCookie: string = '') : Promise<string> {
-    // Get read lock and check authentication status
-    {
-      using _ = await this.authRWMutex.lockRO();
-      if (
-        calleeCookie !== this.sidCookie &&                             // Check if stored cookie has been refreshed by another thread
-        this.sidCookie !== '' && this.lastAuthTime !== -1 &&           // Check if token and time exist
-        (Date.now() - this.lastAuthTime) < CONSTS.AUTH_TOKEN_EXPIRY_MS // Check if token is still valid
-      ) {
-        this.log.debug(`[HillstateAPI] Auth token is still valid, no need to re-authenticate`);
-        return this.sidCookie;
-      }
+  private async getDeviceState(baseURL: string, deviceID: string): Promise<Array<deviceStatusCommand>> {
+    const cached = this.stateCache.get(deviceID);
+    if (cached !== undefined && (Date.now() - cached.fetchedAt) < CONSTS.DEVICE_STATE_TTL_MS) {
+      this.log.debug(`[HillstateAPI] Serving ${deviceID} from cache`);
+      return cached.statusList;
     }
 
-    // Get write lock to perform authentication
-    {
-      using _ = await this.authRWMutex.lockRW();
-      
-      // Double-check authentication status after acquiring write lock
-      if (
-        calleeCookie !== this.sidCookie &&                             // Check if stored cookie has been refreshed by another thread
-        this.sidCookie !== '' && this.lastAuthTime !== -1 &&           // Check if token and time exist
-        (Date.now() - this.lastAuthTime) < CONSTS.AUTH_TOKEN_EXPIRY_MS // Check if token is still valid
-      ) {
-        this.log.debug(`[HillstateAPI] Auth token is still valid, no need to re-authenticate`);
-        return this.sidCookie;
-      }
-
-      this.log.info(`[HillstateAPI] Authenticating with Hillstate server...`);
-
-      // Perform authentication with Hillstate server
-      // No try-catch present, as any authentication errors are critical and should be propagated up
-      const authResp = await got.post(CONSTS.HILLSTATE_LOGIN_URL, {
-        json: {
-          'id': this.encryptedUsername,
-          'password': this.encryptedPassword,
-          'rememberMe': false,
-        },
-        headers: this.basicHeaders,
-      });
-
-      if (authResp.statusCode !== 200 ) {
-        this.log.error('[HillstateAPI] could not authenticate, received: ', authResp.body);
-        throw new Error('Authentication error');
-      }
-
-      const authRespCookie = authResp.headers['set-cookie'] ?? '';
-      this.sidCookie = authRespCookie.toString().split(';')[0];
-
-      // Get the CTOC Token
-      this.log.debug('[HillstateAPI] setting CTOC token...');
-
-      const ctocResp = await got.post(CONSTS.HILLSTATE_CTOC_URL, {
-        headers: {
-          'Cookie': this.sidCookie,
-          ...this.basicHeaders,
-        },
-        json: {
-          'siteId':'338',
-          'dong':this.dong,
-          'ho':this.ho,
-          'clientId':'HT-WEB',
-          'uuid':'',
-        },
-      });
-
-      if (ctocResp.statusCode !== 200 ) {
-        this.log.error('[HillstateAPI] could not get ctoc token, received: ', ctocResp.body);
-        throw new Error('CTOC Token Registration Error');
-      }
-
-      this.log.info(`[HillstateAPI] authentication successful, Auth cookie: ${this.sidCookie}`);
-      
-      this.sidCookie = authRespCookie.toString().split(';')[0];
-      this.lastAuthTime = Date.now();
-
-      return this.sidCookie;
+    const pending = this.inFlight.get(deviceID);
+    if (pending !== undefined) {
+      this.log.debug(`[HillstateAPI] Joining in-flight request for ${deviceID}`);
+      return pending;
     }
-  }
 
-  /* discoverDevicesInt tries to discover devices from Hillstate server
-
-  failedAuthCookie is set to '' on the first call. 
-  If the authentication fails,
-    it retries the call again after triggering re-authentication with the failedAuthCookie
-    This ensures that only one re-authentication is performed, even if multiple threads call authenticate
-  */
-  private async discoverDevicesInt(failedAuthCookie: string): Promise<deviceDiscoverResp> {
-      this.log.debug('[HillstateAPI] Discovering devices called');
-      const currentSidCookie = await this.authenticate(failedAuthCookie);
-  
-      try {
-        const lightsDiscoverResp = await got.get(CONSTS.HILLSTATE_DISCOVER_DEVICES_URL,{
-          headers: {
-            'Cookie': currentSidCookie,
-            ...this.basicHeaders,
-          },
-        });
-  
-        const lightsDiscoverData: deviceDiscoverResp = JSON.parse(lightsDiscoverResp.body as string);
-        return lightsDiscoverData;
-      } catch (error) {
-        // !TODO: Refactor error handling to only reauthenticate on authentication errors
-        if (failedAuthCookie === '') {
-          this.log.info(`[HillstateAPI] First discover attempt failed with cookie ${currentSidCookie}`);
-          return await this.discoverDevicesInt(currentSidCookie);
-        }
-  
-        this.log.error('[HillstateAPI] Discovering devices failed after auth');
-        if (error instanceof Error) {
-          this.log.error(`[HillstateAPI] ${error.message}`);
-          this.log.error(error.stack??'stack trace undefined');
-        } else {
-          this.log.error('[HillstateAPI] unknown error occured, dig deeper! Rock and Stone!');
-        }
-
-        // Return a safe empty response instead of rejecting to avoid unhandled promise rejections
-        return CONSTS.EMPTY_DEVICES_DISCOVER_RESP;
-      }
-  }
-
-  private async getDeviceStatusInt(requestURL: string, deviceID: string, failedAuthCookie: string): Promise<deviceStatusResp> {
-      const getRequestURL = requestURL + deviceID;
-      this.log.debug(`[HillstateAPI] Getting status for device ${getRequestURL}`);
-      const currentSidCookie = await this.authenticate(failedAuthCookie);
-
-      try {
-
-        const deviceGetResp = await got.get(getRequestURL,{
-          headers: {
-            'Cookie': currentSidCookie,
-            ...this.basicHeaders,
-          },
-        });
-
-        if (deviceGetResp.statusCode !== 200 ) {
-          this.log.error(`[HillstateAPI] could not get device status for URL ${getRequestURL}, received: `, deviceGetResp.body);
-          throw new Error('Get Device Status Error');
-        }
-
-        return JSON.parse(deviceGetResp.body as string) as deviceStatusResp;
-
-      } catch (error) {
-        // !TODO: Refactor error handling to only reauthenticate on authentication errors
-        if (failedAuthCookie === '') {
-          this.log.info(`[HillstateAPI] First getDeviceStatus attempt failed with cookie ${currentSidCookie}`);
-          return await this.getDeviceStatusInt(requestURL, deviceID, currentSidCookie);
-        }
-
-        this.log.error(`[HillstateAPI] Getting device status for ${getRequestURL} failed after auth`);
-        if (error instanceof Error) {
-          this.log.error(`[HillstateAPI] ${error.message}`);
-          this.log.error(error.stack??'stack trace undefined');
-        } else {
-          this.log.error('[HillstateAPI] unknown error occured, dig deeper! Rock and Stone!');
-        }
-
-        // Return a safe empty response instead of rejecting to avoid unhandled promise rejections
-        return CONSTS.HILLSTATE_EMPTY_DEVICE_STATUS_RESP;
-      }
-  }
-
-  private async setDeviceStatusInt(requestURL: string, deviceID: string, commandBody: deviceStatusCommand, failedAuthCookie: string): Promise<void> {
-    const setRequestURL = requestURL + deviceID;
-    this.log.debug(`[HillstateAPI] Setting status for device ${setRequestURL} with body ${JSON.stringify(commandBody)}`);
-    const currentCookie = await this.authenticate(failedAuthCookie);
+    const request = this.fetchDeviceState(baseURL, deviceID);
+    this.inFlight.set(deviceID, request);
 
     try {
-
-      const deviceSet = await got.put(setRequestURL, {
-        headers: {
-          'Cookie': currentCookie,
-          ...this.basicHeaders,
-        },
-        json: {
-          'commandList': [
-            {
-              'command': commandBody.command,
-              'value': commandBody.value,
-            },
-          ],
-        },
-      });
-
-      if (deviceSet.statusCode !== 200 ) {
-        this.log.error(`[HillstateAPI] could not set device status for URL ${setRequestURL}, received: `, deviceSet.body);
-        throw new Error('Set Device Status Error');
-      }
-
-    } catch (error) {
-      // !TODO: Refactor error handling to only reauthenticate on authentication errors
-      if (failedAuthCookie === '') {
-        this.log.info(`[HillstateAPI] First setDeviceStatus attempt failed with cookie ${currentCookie}`);
-        return await this.setDeviceStatusInt(requestURL, deviceID, commandBody, currentCookie);
-      }
-
-      this.log.error(`[HillstateAPI] Setting device status for ${setRequestURL} failed after auth`);
-      if (error instanceof Error) {
-        this.log.error(`[HillstateAPI] ${error.message}`);
-        this.log.error(error.stack??'stack trace undefined');
-      } else {
-        this.log.error('[HillstateAPI] unknown error occured, dig deeper! Rock and Stone!');
-      }
+      const statusList = await request;
+      this.stateCache.set(deviceID, { statusList, fetchedAt: Date.now() });
+      return statusList;
+    } finally {
+      this.inFlight.delete(deviceID);
     }
   }
-  
+
+  private async fetchDeviceState(baseURL: string, deviceID: string): Promise<Array<deviceStatusCommand>> {
+    const requestURL = baseURL + deviceID;
+    this.log.debug(`[HillstateAPI] Getting status for device ${requestURL}`);
+
+    const body = await this.withSession((cookie) => this.send('GET', requestURL, cookie));
+    return (JSON.parse(body) as deviceStatusResp).data.statusList;
+  }
+
+  private async setDeviceStatus(baseURL: string, deviceID: string, commandBody: deviceStatusCommand): Promise<void> {
+    const requestURL = baseURL + deviceID;
+    this.log.debug(`[HillstateAPI] Setting status for device ${requestURL} with body ${JSON.stringify(commandBody)}`);
+
+    await this.withSession((cookie) => this.send('PUT', requestURL, cookie, {
+      'commandList': [
+        {
+          'command': commandBody.command,
+          'value': commandBody.value,
+        },
+      ],
+    }));
+
+    // Drop the cached state so the next read reflects the write we just made.
+    this.stateCache.delete(deviceID);
+  }
+
+  // -----------------------------
+  // --------- Session -----------
+  // -----------------------------
+
+  /* withSession runs an authenticated request, retrying once if the server
+     rejects the session. Everything else propagates to the caller, which turns it
+     into a HomeKit communication failure.
+  */
+  private async withSession<T>(request: (cookie: string) => Promise<T>): Promise<T> {
+    const session = await this.getSession();
+
+    try {
+      return await request(session.cookie);
+    } catch (error) {
+      if (!isSessionExpired(error)) {
+        throw error;
+      }
+
+      this.log.info('[HillstateAPI] Session rejected, re-authenticating');
+      this.invalidateSession(session.generation);
+
+      const refreshed = await this.getSession();
+      return await request(refreshed.cookie);
+    }
+  }
+
+  /* getSession returns a usable session cookie along with the generation it
+     belongs to, so the caller can invalidate exactly that session later.
+  */
+  private async getSession(): Promise<{ cookie: string; generation: number }> {
+    let promise = this.authPromise;
+    if (promise === null || Date.now() >= this.sessionExpiresAt) {
+      promise = this.beginAuthentication();
+    }
+
+    // Captured before awaiting so it names the session we are about to use.
+    const generation = this.authGeneration;
+    return { cookie: await promise, generation };
+  }
+
+  /* beginAuthentication starts a login and publishes it, so callers arriving
+     while it is in flight share it instead of starting their own.
+  */
+  private beginAuthentication(): Promise<string> {
+    this.authGeneration += 1;
+    // Marked valid up front: otherwise callers arriving mid-login would each see
+    // an expired session and kick off another one.
+    this.sessionExpiresAt = Date.now() + CONSTS.AUTH_TOKEN_EXPIRY_MS;
+
+    const promise = this.authenticate();
+    this.authPromise = promise;
+
+    // A rejected login must not stay cached, or every later request reuses it.
+    promise.catch(() => {
+      if (this.authPromise === promise) {
+        this.authPromise = null;
+        this.sessionExpiresAt = 0;
+      }
+    });
+
+    return promise;
+  }
+
+  /* invalidateSession forces the next request to log in again, unless another
+     caller has already replaced the session that `generation` refers to.
+  */
+  private invalidateSession(generation: number): void {
+    if (generation === this.authGeneration) {
+      this.authPromise = null;
+      this.sessionExpiresAt = 0;
+    }
+  }
+
+  /* authenticate logs in and registers the CTOC token, returning the session
+     cookie. Reached only through getSession().
+  */
+  private async authenticate(): Promise<string> {
+    this.log.info('[HillstateAPI] Authenticating with Hillstate server...');
+
+    const authResp = await got.post(CONSTS.HILLSTATE_LOGIN_URL, {
+      json: {
+        'id': this.encryptedUsername,
+        'password': this.encryptedPassword,
+        'rememberMe': false,
+      },
+      headers: this.basicHeaders,
+      timeout: { request: CONSTS.REQUEST_TIMEOUT_MS },
+    });
+
+    const sidCookie = (authResp.headers['set-cookie'] ?? '').toString().split(';')[0];
+    if (sidCookie === '') {
+      throw new Error('login returned no session cookie');
+    }
+
+    this.log.debug('[HillstateAPI] Setting CTOC token...');
+
+    await got.post(CONSTS.HILLSTATE_CTOC_URL, {
+      headers: {
+        'Cookie': sidCookie,
+        ...this.basicHeaders,
+      },
+      json: {
+        'siteId': '338',
+        'dong': this.dong,
+        'ho': this.ho,
+        'clientId': 'HT-WEB',
+        'uuid': '',
+      },
+      timeout: { request: CONSTS.REQUEST_TIMEOUT_MS },
+    });
+
+    // The cookie itself is deliberately not logged: it is a live session token
+    // and the Homebridge log is world-readable.
+    this.log.info('[HillstateAPI] Authentication successful');
+    return sidCookie;
+  }
+
+  // -----------------------------
+  // ------- HTTP plumbing -------
+  // -----------------------------
+
+  /* send performs one outbound call, bounded by the concurrency limiter.
+     got throws on any non-2xx response, so there is no status code to check here.
+  */
+  private async send(method: 'GET' | 'PUT', url: string, cookie: string, json?: unknown): Promise<string> {
+    await this.acquireSlot();
+
+    try {
+      const response = await got(url, {
+        method,
+        headers: {
+          'Cookie': cookie,
+          ...this.basicHeaders,
+        },
+        timeout: { request: CONSTS.REQUEST_TIMEOUT_MS },
+        ...(json === undefined ? {} : { json }),
+      });
+      return response.body;
+    } finally {
+      this.releaseSlot();
+    }
+  }
+
+  /* acquireSlot waits until the request budget allows another call. A Pi Zero W2
+     is single-core, and letting all ~17 device reads open TLS connections at once
+     is what made HomeKit's read timeout expire.
+  */
+  private async acquireSlot(): Promise<void> {
+    if (this.activeRequests < CONSTS.MAX_CONCURRENT_REQUESTS) {
+      this.activeRequests += 1;
+      return;
+    }
+
+    await new Promise<void>((resolve) => this.waitingForSlot.push(resolve));
+  }
+
+  /* releaseSlot hands the freed slot directly to the next waiter, rather than
+     decrementing and letting a newcomer take the fast path ahead of the queue.
+  */
+  private releaseSlot(): void {
+    const next = this.waitingForSlot.shift();
+    if (next !== undefined) {
+      next();
+      return;
+    }
+
+    this.activeRequests -= 1;
+  }
 }
