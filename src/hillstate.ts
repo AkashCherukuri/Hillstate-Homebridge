@@ -55,6 +55,11 @@ export class HillstateAPI {
   private stateCache = new Map<string, { statusList: Array<deviceStatusCommand>; fetchedAt: number }>();
   private inFlight = new Map<string, Promise<Array<deviceStatusCommand>>>();
 
+  /* Every device the accessories care about, as deviceID -> base URL, plus the
+     timer that keeps their cached state warm. */
+  private tracked = new Map<string, string>();
+  private pollTimer: NodeJS.Timeout | null = null;
+
   /* Outbound request limiter. */
   private activeRequests: number = 0;
   private waitingForSlot: Array<() => void> = [];
@@ -126,6 +131,64 @@ export class HillstateAPI {
   }
 
   // -----------------------------
+  // -------- Polling ------------
+  // -----------------------------
+
+  /* The accessories declare which devices exist; the poller then refreshes them on
+     a timer so that a HomeKit read is a cache lookup rather than an HTTP request.
+  */
+  public trackLight(deviceID: string): void {
+    this.tracked.set(deviceID, CONSTS.HILLSTATE_LIGHT_URL);
+  }
+
+  public trackAirCon(deviceID: string): void {
+    this.tracked.set(deviceID, CONSTS.HILLSTATE_AIRCON_URL);
+  }
+
+  public trackHeater(deviceID: string): void {
+    this.tracked.set(deviceID, CONSTS.HILLSTATE_HEATER_URL);
+  }
+
+  /* startPolling begins refreshing tracked devices. Called once, after discovery. */
+  public startPolling(): void {
+    if (this.pollTimer !== null) {
+      return;
+    }
+
+    this.log.info(`[HillstateAPI] Polling ${this.tracked.size} devices every `
+      + `${CONSTS.POLL_INTERVAL_MS / 1000}s`);
+
+    // The rejection handler is not optional: an unhandled rejection exits Node,
+    // which crash-loops Homebridge.
+    const tick = () => {
+      this.refreshTracked().catch((error) => {
+        this.log.error(`[HillstateAPI] Background refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    };
+
+    this.pollTimer = setInterval(tick, CONSTS.POLL_INTERVAL_MS);
+    tick();
+  }
+
+  /* refreshTracked walks every device one at a time.
+
+     Sequential on purpose. The Pi Zero W2 is single-core and nothing is waiting on
+     the result, so there is no reason to spend the concurrency budget here and
+     make the foreground writes queue behind it.
+  */
+  private async refreshTracked(): Promise<void> {
+    for (const [deviceID, baseURL] of this.tracked) {
+      try {
+        const statusList = await this.fetchDeviceState(baseURL, deviceID);
+        this.stateCache.set(deviceID, { statusList, fetchedAt: Date.now() });
+      } catch (error) {
+        // Left alone deliberately: the previous value stays cached and servable.
+        this.log.debug(`[HillstateAPI] Refresh of ${deviceID} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
+  // -----------------------------
   // ------ Device state ---------
   // -----------------------------
 
@@ -159,6 +222,18 @@ export class HillstateAPI {
       const statusList = await request;
       this.stateCache.set(deviceID, { statusList, fetchedAt: Date.now() });
       return statusList;
+    } catch (error) {
+      // A slow or flaky upstream should not blank the tile. Any previous value is
+      // a far better answer than "No Response", which is what throwing here
+      // produced ~180 times over 17-19 Aug 2026.
+      const stale = this.stateCache.get(deviceID);
+      if (stale === undefined) {
+        throw error;
+      }
+
+      const ageSeconds = Math.round((Date.now() - stale.fetchedAt) / 1000);
+      this.log.warn(`[HillstateAPI] Read of ${deviceID} failed, serving state from ${ageSeconds}s ago`);
+      return stale.statusList;
     } finally {
       this.inFlight.delete(deviceID);
     }
@@ -185,8 +260,20 @@ export class HillstateAPI {
       ],
     }));
 
-    // Drop the cached state so the next read reflects the write we just made.
-    this.stateCache.delete(deviceID);
+    // Mark the cached state stale rather than dropping it. The next read must go to
+    // the network so it reflects the write we just made, but if that read fails the
+    // superseded value is still a better answer than "No Response" -- and deleting
+    // the entry outright would leave getDeviceState with no fallback at all.
+    const cached = this.stateCache.get(deviceID);
+    if (cached !== undefined) {
+      cached.fetchedAt = 0;
+    }
+
+    // Start refetching immediately. A HomeKit read arriving before this finishes
+    // joins the in-flight request rather than queuing a second one.
+    this.getDeviceState(baseURL, deviceID).catch(() => {
+      // Nothing is waiting on this; a genuine failure is reported by the next read.
+    });
   }
 
   // -----------------------------

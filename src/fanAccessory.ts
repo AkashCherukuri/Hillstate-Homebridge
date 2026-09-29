@@ -14,17 +14,17 @@ export class HillstateFanPlatformAccessory {
     private readonly platform: HillstateIOTHomebridgePlatform,
     private readonly accessory: PlatformAccessory,
   ) {
-    this.accessory.getService(this.platform.Service.AccessoryInformation)!
-      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Default-Model')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
+    // See the note in lightAccessory: the ID must not come from displayName.
+    this.fanId = this.accessory.context.device.id;
+    const name = this.accessory.context.name;
 
-    this.service = this.accessory.getService(this.platform.Service.Fan) || this.accessory.addService(this.platform.Service.Fan);
-    this.service.setCharacteristic(
-      this.platform.Characteristic.Name,
-      accessory.context.device.id);
+    this.platform.setAccessoryInformation(this.accessory, name);
 
-    this.fanId = this.accessory.displayName;
+    this.service = this.accessory.getService(this.platform.Service.Fan)
+      || this.accessory.addService(this.platform.Service.Fan);
+    this.platform.bindName(this.accessory, this.service, name);
+
+    this.platform.hillstateAPI.trackLight(this.fanId);
 
     this.service.getCharacteristic(this.platform.Characteristic.On)
       .onSet(this.setOn.bind(this))  // SET - bind to the `setOn` method below

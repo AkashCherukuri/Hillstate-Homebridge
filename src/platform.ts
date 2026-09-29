@@ -18,6 +18,8 @@ type AccessoryConstructor = new (
   accessory: PlatformAccessory,
 ) => unknown;
 
+type HillstateDevice = deviceDiscoverResp['data']['deviceList'][number];
+
 /**
  * HomebridgePlatform
  * This class is the main constructor for your plugin, this is where you should
@@ -102,25 +104,22 @@ export class HillstateIOTHomebridgePlatform implements DynamicPlatformPlugin {
       });
   }
 
-  /* syncAccessories registers everything discovered and then removes accessories
-     that no longer exist upstream.
+  /* syncAccessories registers everything discovered.
 
-     The pruning half used to run synchronously alongside the discovery request
-     rather than after it, so it always saw an empty result set and unregistered
-     every cached accessory on every startup.
+     It deliberately never removes anything. An earlier version pruned accessories
+     missing from the discovery response, and on 2026-03-04 a bad response made it
+     unregister all 13 at once. HomeKit deletes an unregistered accessory along with
+     its name, room and automations, so the damage is not recoverable from here,
+     while the opposite failure -- a stale tile after a device is genuinely removed
+     upstream -- is one click in the Homebridge UI.
   */
   private syncAccessories(devices: deviceDiscoverResp) {
     const deviceList = devices.data.deviceList;
 
-    // An empty list means the account genuinely has no devices, which has never
-    // been true here, or that something went wrong upstream. Either way it must
-    // not be read as "delete everything".
     if (deviceList.length === 0) {
-      this.log.warn('Discovery returned no devices, leaving cached accessories untouched');
+      this.log.warn('Discovery returned no devices');
       return;
     }
-
-    const discoveredUUIDs = new Set<string>();
 
     for (const device of deviceList) {
       let accessoryClass: AccessoryConstructor;
@@ -141,33 +140,113 @@ export class HillstateIOTHomebridgePlatform implements DynamicPlatformPlugin {
         continue;
       }
 
-      const uuid = this.api.hap.uuid.generate(device.id);
-      discoveredUUIDs.add(uuid);
+      // Logged so config.json's deviceNames map can be filled in with real values:
+      // the upstream labels are semi-technical and not obvious from the API docs.
+      this.log.info(`Discovered ${device.id} (${device.deviceType}) `
+        + `name='${device.deviceName}' location='${device.deviceLocation}'`);
 
+      const uuid = this.api.hap.uuid.generate(device.id);
       const existingAccessory = this.accessories.get(uuid);
+
       if (existingAccessory !== undefined) {
-        this.log.info('Restoring existing device from cache:', existingAccessory.displayName);
         // Refresh the stored device metadata in case it changed upstream.
         existingAccessory.context.device = device;
+        const name = this.applyName(existingAccessory, device);
+        this.log.info(`Restoring existing device from cache: ${device.id} as '${name}'`);
         new accessoryClass(this, existingAccessory);
         this.api.updatePlatformAccessories([existingAccessory]);
       } else {
-        // Save the device ID as the display name!
-        this.log.info('Adding new discovered device:', device.id);
         const accessory = new this.api.platformAccessory(device.id, uuid);
         accessory.context.device = device;
+        const name = this.applyName(accessory, device);
+        this.log.info(`Adding new discovered device: ${device.id} as '${name}'`);
         new accessoryClass(this, accessory);
         this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
         this.accessories.set(uuid, accessory);
       }
     }
 
-    for (const [uuid, accessory] of this.accessories) {
-      if (!discoveredUUIDs.has(uuid)) {
-        this.log.info('Removing existing accessory from cache:', accessory.displayName);
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-        this.accessories.delete(uuid);
-      }
+    // Reads are served from cache from here on; see HillstateAPI.startPolling.
+    this.hillstateAPI.startPolling();
+  }
+
+  /* nameFromConfig looks a device up in the config.json `deviceNames` map.
+
+     This map is the whole point of the naming work: HomeKit stores a Home app
+     rename controller-side only, so when Apple drops it there is nothing on disk
+     here to fall back to and every light reverts to its raw ID. With the map, the
+     fallback is a name the user chose.
+  */
+  private nameFromConfig(deviceId: string): string | undefined {
+    const entries: unknown = this.config.deviceNames;
+    if (!Array.isArray(entries)) {
+      return undefined;
     }
+
+    const match = entries.find((entry) => entry?.id === deviceId);
+    return typeof match?.name === 'string' && match.name !== '' ? match.name : undefined;
+  }
+
+  /* applyName decides what this accessory is called and records it on the accessory,
+     where updatePlatformAccessories persists it to cachedAccessories.
+
+     Precedence: a Home app rename (stored via the ConfiguredName characteristic)
+     wins, then the config map, then the upstream label, then the device ID. The
+     config value that was last applied is remembered, so editing config.json
+     overrides a stale Home app rename instead of being silently ignored.
+  */
+  private applyName(accessory: PlatformAccessory, device: HillstateDevice): string {
+    const fromConfig = this.nameFromConfig(device.id);
+    const context = accessory.context;
+
+    if (fromConfig !== context.nameFromConfig) {
+      context.nameFromConfig = fromConfig;
+      context.configuredName = undefined;
+    }
+
+    const name = context.configuredName || fromConfig || device.deviceLocation || device.id;
+    context.name = name;
+    accessory.displayName = name;
+    return name;
+  }
+
+  /* setAccessoryInformation fills in the metadata tile shared by all three
+     accessory types. SerialNumber must differ per accessory: they all used to
+     report 'Default-Serial', which HomeKit can read as one accessory appearing
+     several times.
+  */
+  public setAccessoryInformation(accessory: PlatformAccessory, name: string): void {
+    accessory.getService(this.Service.AccessoryInformation)!
+      .setCharacteristic(this.Characteristic.Manufacturer, 'Hyundai Hillstate')
+      .setCharacteristic(this.Characteristic.Model, accessory.context.device.deviceType)
+      .setCharacteristic(this.Characteristic.SerialNumber, accessory.context.device.id)
+      .setCharacteristic(this.Characteristic.Name, name);
+  }
+
+  /* bindName names a service and makes a Home app rename durable.
+
+     Without ConfiguredName a rename lives only in Apple's database; when that is
+     resynced the name is gone and the accessory, which only ever advertised its
+     device ID, cannot supply a better one. Writing the rename back into
+     accessory.context puts it in cachedAccessories on disk instead.
+  */
+  public bindName(accessory: PlatformAccessory, service: Service, name: string): void {
+    service.setCharacteristic(this.Characteristic.Name, name);
+    service.addOptionalCharacteristic(this.Characteristic.ConfiguredName);
+
+    service.getCharacteristic(this.Characteristic.ConfiguredName)
+      .updateValue(name)
+      .onSet((value) => {
+        const renamed = String(value);
+        if (renamed === '' || renamed === accessory.context.configuredName) {
+          return;
+        }
+
+        this.log.info(`Renamed ${accessory.context.device.id} to '${renamed}'`);
+        accessory.context.configuredName = renamed;
+        accessory.context.name = renamed;
+        accessory.displayName = renamed;
+        this.api.updatePlatformAccessories([accessory]);
+      });
   }
 }

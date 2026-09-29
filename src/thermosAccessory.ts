@@ -15,22 +15,24 @@ export class HillstateThermosPlatformAccessory {
     private readonly platform: HillstateIOTHomebridgePlatform,
     private readonly accessory: PlatformAccessory,
   ) {
-    // set accessory information
-    this.accessory.getService(this.platform.Service.AccessoryInformation)!
-      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Default-Model')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
-
     // The heater serving a room is numbered 400 below its aircon:
     // aircon 012811 -> heater 012411.
-    this.airconId = this.accessory.displayName;
-    this.heaterId = '0' + ((+this.accessory.displayName) - 400).toString();
+    //
+    // Both IDs come from the device metadata rather than displayName. That field
+    // now holds a human name, and `Number('Bedroom AC') - 400` is NaN, which would
+    // silently address a heater called '0NaN'.
+    this.airconId = this.accessory.context.device.id;
+    this.heaterId = '0' + (Number(this.airconId) - 400).toString();
+    const name = this.accessory.context.name;
 
-    this.service = this.accessory.getService(this.platform.Service.Thermostat) || this.accessory.addService(this.platform.Service.Thermostat);
+    this.platform.setAccessoryInformation(this.accessory, name);
 
-    this.service.setCharacteristic(
-      this.platform.Characteristic.Name,
-      accessory.context.device.id);
+    this.service = this.accessory.getService(this.platform.Service.Thermostat)
+      || this.accessory.addService(this.platform.Service.Thermostat);
+    this.platform.bindName(this.accessory, this.service, name);
+
+    this.platform.hillstateAPI.trackAirCon(this.airconId);
+    this.platform.hillstateAPI.trackHeater(this.heaterId);
 
     this.service.getCharacteristic(this.platform.Characteristic.CurrentHeatingCoolingState)
       .onGet(this.getCurrentHeatingCoolingState.bind(this)); // GET - bind to the `getOn` method below

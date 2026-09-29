@@ -64,6 +64,23 @@ The account also reports `heating`, `wallsocket`, `switch`, and a real `fan` dev
 Heaters are reached indirectly through the thermostat; the rest are intentionally unmapped.
 `CONSTS.VENT_DEVICE_TYPE` is currently dead code.
 
+### Naming
+
+HomeKit stores a Home app rename **controller-side only**. When Apple drops it — as
+happened around 18 Aug 2026, with no restart and no accessory change on the Pi — the
+accessory can only offer whatever name it advertises. So the plugin owns names:
+
+- `config.deviceNames` (an array of `{id, name}`) is the durable fallback, backed up with
+  `config.json`. Precedence is **Home app rename → `deviceNames` → `deviceLocation` →
+  `device.id`**, resolved once in `platform.applyName`.
+- A Home app rename arrives on the `ConfiguredName` characteristic and is written into
+  `accessory.context.configuredName`, which persists it to `cachedAccessories`.
+  `applyName` remembers the config value it last applied in `context.nameFromConfig`, so
+  editing `config.json` overrides a stale rename instead of being ignored.
+- **Device IDs must come from `accessory.context.device.id`, never `accessory.displayName`.**
+  `displayName` now holds a human name. The thermostat is the sharp edge:
+  `Number('Bedroom AC') - 400` is `NaN`, which would address a heater called `0NaN`.
+
 ### Heater ID convention
 
 A room's heater ID is its aircon ID minus 400, re-padded: aircon `012811` → heater `012411`
@@ -86,21 +103,29 @@ for enumerating devices; state must be fetched per-device (~93 ms each).
 
 These encode fixes for outages that took the whole bridge down for months:
 
-1. **Never prune accessories before discovery resolves**, and never prune on an empty
-   device list. Doing either unregisters every accessory and empties `cachedAccessories`.
+1. **Never unregister an accessory.** `syncAccessories` only ever adds and updates.
+   HomeKit deletes an unregistered accessory together with its name, room and
+   automations, and none of that is recoverable from here; a stale tile after a device
+   is genuinely removed upstream is one click in the Homebridge UI. Pruning caused the
+   2026-03-04 outage, when a bad discovery response unregistered all 13 accessories at
+   once.
 2. **Read handlers must not throw raw errors.** Wrap failures via
    `platform.communicationFailure()` so HomeKit shows "No Response" instead of
    "Unhandled error thrown inside read handler".
 3. **No un-awaited promises without a `.catch()`.** An unhandled rejection exits Node and
    crash-loops Homebridge. `HillstateAPI` deliberately does *not* authenticate in its
    constructor for this reason.
-4. **Respect the request budget.** `HillstateAPI` caches state, collapses concurrent reads
-   of the same device onto one request, and caps concurrency at
-   `CONSTS.MAX_CONCURRENT_REQUESTS`. The Pi Zero is single-core; a full fan-out of ~17
-   simultaneous TLS connections blows HomeKit's ~5 s read timeout.
-5. **Only re-authenticate on 401/403.** Treating every error as an expired session causes
+4. **Keep HomeKit off the network.** A background poller
+   (`HillstateAPI.startPolling`, every `CONSTS.POLL_INTERVAL_MS`) refreshes every tracked
+   device, so read handlers are cache lookups. `DEVICE_STATE_TTL_MS` must stay longer than
+   the poll interval, or reads start re-fetching inline again. Concurrency is still capped
+   at `CONSTS.MAX_CONCURRENT_REQUESTS` — the Pi Zero is single-core.
+5. **A failed read serves the last known value**, it does not throw. Throwing produced
+   ~180 "No Response" events over 17-19 Aug 2026 against an API that was merely slow.
+   Only a device that has never been read successfully surfaces an error.
+6. **Only re-authenticate on 401/403.** Treating every error as an expired session causes
    a login storm during an outage.
-6. **Never log the session cookie.** `homebridge.log` is world-readable.
+7. **Never log the session cookie.** `homebridge.log` is world-readable.
 
 ## Debugging
 

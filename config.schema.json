@@ -37,7 +37,27 @@
       "bathroomVentName": {
         "title": "Bathroom Vent name on Hillstate",
         "type": "string",
-        "default": "주방1-4"
+        "default": "\uc8fc\ubc291-4"
+      },
+      "deviceNames": {
+        "title": "Device names",
+        "description": "HomeKit names for each Hillstate device ID. These are the fallback if a Home app rename is ever lost, so fill them in.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "title": "Device ID",
+              "type": "string",
+              "required": true
+            },
+            "name": {
+              "title": "HomeKit name",
+              "type": "string",
+              "required": true
+            }
+          }
+        }
       }
     }
   }

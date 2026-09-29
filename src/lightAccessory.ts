@@ -14,20 +14,19 @@ export class HillstateLightPlatformAccessory {
     private readonly platform: HillstateIOTHomebridgePlatform,
     private readonly accessory: PlatformAccessory,
   ) {
-    // set accessory information
-    this.accessory.getService(this.platform.Service.AccessoryInformation)!
-      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Default-Model')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
+    // Taken from the device metadata, never from displayName: that is a
+    // user-facing field, so a rename would otherwise be built into request URLs
+    // and break every read and write for this light.
+    this.lightId = this.accessory.context.device.id;
+    const name = this.accessory.context.name;
 
-    this.service = this.accessory.getService(this.platform.Service.Lightbulb) || this.accessory.addService(this.platform.Service.Lightbulb);
+    this.platform.setAccessoryInformation(this.accessory, name);
 
-    this.service.setCharacteristic(
-      this.platform.Characteristic.Name,
-      accessory.context.device.id,
-    );
+    this.service = this.accessory.getService(this.platform.Service.Lightbulb)
+      || this.accessory.addService(this.platform.Service.Lightbulb);
+    this.platform.bindName(this.accessory, this.service, name);
 
-    this.lightId = this.accessory.displayName;
+    this.platform.hillstateAPI.trackLight(this.lightId);
 
     this.service.getCharacteristic(this.platform.Characteristic.On)
       .onSet(this.setOn.bind(this))  // SET - bind to the `setOn` method below
